@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CA Bundle Tracker — Who Ships Their Own Certificate Store?</title>
+<style>
+:root {
+  --bg: #f8f9fa;
+  --fg: #1a1a2e;
+  --card: #fff;
+  --border: #dee2e6;
+  --accent: #0d6efd;
+  --danger: #dc3545;
+  --success: #198754;
+  --warn: #fd7e14;
+  --muted: #6c757d;
+  --header-bg: #1a1a2e;
+  --header-fg: #f8f9fa;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121212;
+    --fg: #e0e0e0;
+    --card: #1e1e1e;
+    --border: #333;
+    --header-bg: #0a0a1a;
+    --accent: #4dabf7;
+    --danger: #ff6b6b;
+    --success: #51cf66;
+    --warn: #ffa94d;
+    --muted: #868e96;
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--fg);
+  line-height: 1.6;
+}
+header {
+  background: var(--header-bg); color: var(--header-fg);
+  padding: 2rem 1rem; text-align: center;
+}
+header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+header p { opacity: 0.85; max-width: 700px; margin: 0 auto; }
+.container { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+.context-box {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 1.25rem; margin: 1.5rem 0;
+}
+.context-box h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
+.context-box p { margin-bottom: 0.5rem; }
+.legend { display: flex; gap: 1.5rem; flex-wrap: wrap; margin: 1rem 0; }
+.legend-item { display: flex; align-items: center; gap: 0.4rem; font-size: 0.9rem; }
+.dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.dot-bundled { background: var(--danger); }
+.dot-os { background: var(--success); }
+.dot-fallback { background: var(--warn); }
+.dot-hybrid { background: var(--accent); }
+
+h2.section-title {
+  font-size: 1.3rem; margin: 2rem 0 1rem;
+  padding-bottom: 0.5rem; border-bottom: 2px solid var(--accent);
+}
+
+.table-wrap { overflow-x: auto; margin: 1rem 0; }
+table {
+  width: 100%; border-collapse: collapse;
+  background: var(--card); border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border);
+}
+th, td { padding: 0.6rem 0.8rem; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
+th { background: var(--header-bg); color: var(--header-fg); font-weight: 600; position: sticky; top: 0; }
+tr:hover { background: rgba(13,110,253,0.04); }
+td:first-child { font-weight: 600; white-space: nowrap; }
+
+.badge {
+  display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px;
+  font-size: 0.78rem; font-weight: 600; color: #fff;
+}
+.badge-bundled { background: var(--danger); }
+.badge-os { background: var(--success); }
+.badge-fallback { background: var(--warn); color: #1a1a2e; }
+.badge-hybrid { background: var(--accent); }
+
+.note { font-size: 0.82rem; color: var(--muted); }
+a { color: var(--accent); }
+footer {
+  text-align: center; padding: 2rem 1rem; color: var(--muted);
+  font-size: 0.85rem; border-top: 1px solid var(--border); margin-top: 2rem;
+}
+.scanner-cta {
+  background: linear-gradient(135deg, #1a1a2e, #16213e);
+  color: #f8f9fa; border-radius: 8px; padding: 1.5rem;
+  margin: 1.5rem 0; text-align: center;
+}
+.scanner-cta h3 { margin-bottom: 0.5rem; }
+.scanner-cta code {
+  display: inline-block; background: rgba(255,255,255,0.15);
+  padding: 0.3rem 0.8rem; border-radius: 4px; margin: 0.5rem 0;
+  font-family: monospace; font-size: 0.9rem;
+}
+.filter-bar { margin: 1rem 0; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.filter-btn {
+  padding: 0.3rem 0.8rem; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--card); color: var(--fg); cursor: pointer; font-size: 0.85rem;
+}
+.filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>CA Bundle Tracker</h1>
+  <p>Which software ships its own Certificate Authority (CA) trust store vs. trusting the host operating system's bundle? A reference for understanding patch propagation after CA compromises.</p>
+</header>
+
+<div class="container">
+
+<div class="context-box">
+  <h2>Why this matters</h2>
+  <p>In October 2026, eight eMudhra intermediate CA certificates were found to have trivially weak private keys (integers as small as 4 on secp384r1). Every trust store containing these CAs needed patching.</p>
+  <p>Software that bundles its own CA certificates requires its own update — an OS-level patch does not reach it. Java applications, Python environments, Node.js runtimes, Docker images, and Electron apps each carry independent copies that may remain vulnerable long after the OS is patched.</p>
+  <p>No definitive public reference existed for mapping software to its CA trust source. This page fills that gap.</p>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><span class="dot dot-bundled"></span> Bundled — ships own CA store, independent of OS</div>
+  <div class="legend-item"><span class="dot dot-os"></span> OS Store — delegates to the operating system</div>
+  <div class="legend-item"><span class="dot dot-fallback"></span> Fallback — OS primary, bundled fallback</div>
+  <div class="legend-item"><span class="dot dot-hybrid"></span> Hybrid — own store + OS supplement</div>
+</div>
+
+<div class="filter-bar">
+  <button class="filter-btn active" data-filter="all">All</button>
+  <button class="filter-btn" data-filter="bundled">Bundled only</button>
+  <button class="filter-btn" data-filter="os">OS Store only</button>
+  <button class="filter-btn" data-filter="fallback">Fallback</button>
+  <button class="filter-btn" data-filter="hybrid">Hybrid</button>
+</div>
+
+<!-- BROWSERS -->
+<h2 class="section-title">Browsers</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Software</th><th>Trust Source</th><th>Bundle Origin</th><th>Embedded In</th><th>Update Mechanism</th><th>OS Store Override</th></tr></thead>
+<tbody>
+<tr data-type="hybrid"><td>Chrome / Chromium</td><td><span class="badge badge-hybrid">Hybrid</span></td><td>Chrome Root Store</td><td>Binary (compiled in)</td><td>Component Updater (~24h) + browser release</td><td>Enterprise/user-installed OS roots supplemented</td></tr>
+<tr data-type="hybrid"><td>Microsoft Edge</td><td><span class="badge badge-hybrid">Hybrid</span></td><td>Microsoft Trusted Root Program CTL</td><td>Binary</td><td>Component Updater + browser release</td><td>Enterprise/user OS roots supplemented</td></tr>
+<tr data-type="bundled"><td>Firefox</td><td><span class="badge badge-bundled">Bundled</span></td><td>Mozilla NSS certdata.txt</td><td>libnssckbi.so/.dylib/.dll</td><td>Browser release only</td><td><code>security.enterprise_roots.enabled</code> (on by default: Win/macOS)</td></tr>
+<tr data-type="os"><td>Safari</td><td><span class="badge badge-os">OS Store</span></td><td>Apple Root Program</td><td>N/A (OS-level)</td><td>macOS / iOS update</td><td>N/A — is the OS store</td></tr>
+<tr data-type="hybrid"><td>Brave</td><td><span class="badge badge-hybrid">Hybrid</span></td><td>Chrome Root Store (Chromium fork)</td><td>Binary</td><td>Chromium Component Updater</td><td>Same as Chrome</td></tr>
+<tr data-type="hybrid"><td>Opera</td><td><span class="badge badge-hybrid">Hybrid</span></td><td>Chrome Root Store (Chromium fork)</td><td>Binary</td><td>Chromium Component Updater</td><td>Same as Chrome</td></tr>
+<tr data-type="hybrid"><td>Vivaldi</td><td><span class="badge badge-hybrid">Hybrid</span></td><td>Chrome Root Store (Chromium fork)</td><td>Binary</td><td>Chromium Component Updater</td><td>Same as Chrome</td></tr>
+<tr data-type="bundled"><td>Tor Browser</td><td><span class="badge badge-bundled">Bundled</span></td><td>Mozilla NSS (Firefox ESR fork)</td><td>libnssckbi.so in install dir</td><td>Tor Browser release (ESR cadence)</td><td><code>security.enterprise_roots.enabled</code> (default: off)</td></tr>
+<tr data-type="hybrid"><td>Arc</td><td><span class="badge badge-hybrid">Hybrid</span></td><td>Chrome Root Store (Chromium fork)</td><td>Binary</td><td>Chromium Component Updater</td><td>Same as Chrome</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- LANGUAGE RUNTIMES -->
+<h2 class="section-title">Language Runtimes &amp; Standard Libraries</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Software</th><th>Trust Source</th><th>Bundle Origin</th><th>Bundle Location</th><th>Update Mechanism</th><th>Override</th></tr></thead>
+<tbody>
+<tr data-type="bundled"><td>Python (requests / certifi)</td><td><span class="badge badge-bundled">Bundled</span></td><td>Mozilla roots via certifi PyPI package</td><td><code>certifi/cacert.pem</code> in site-packages</td><td><code>pip install --upgrade certifi</code></td><td><code>REQUESTS_CA_BUNDLE</code>, <code>SSL_CERT_FILE</code>, <code>--use-feature=truststore</code> (pip 22.2+)</td></tr>
+<tr data-type="os"><td>Python (stdlib ssl)</td><td><span class="badge badge-os">OS Store</span></td><td>System OpenSSL</td><td>N/A</td><td>OS update</td><td><code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code></td></tr>
+<tr data-type="bundled"><td>Node.js (official builds)</td><td><span class="badge badge-bundled">Bundled</span></td><td>Mozilla roots compiled in</td><td><code>src/node_root_certs.h</code></td><td>Node.js release</td><td><code>--use-openssl-ca</code>, <code>NODE_EXTRA_CA_CERTS</code>, <code>NODE_USE_SYSTEM_CA=1</code> (v22.15+)</td></tr>
+<tr data-type="bundled"><td>Java / JVM (OpenJDK)</td><td><span class="badge badge-bundled">Bundled</span></td><td>Oracle/OpenJDK Root CA Program</td><td><code>$JAVA_HOME/lib/security/cacerts</code></td><td>JDK release or manual <code>keytool</code></td><td><code>-Djavax.net.ssl.trustStore</code>, keytool</td></tr>
+<tr data-type="fallback"><td>Go (standard library)</td><td><span class="badge badge-fallback">Fallback</span></td><td>OS primary; Mozilla fallback (since 1.20)</td><td>Compiled into binary if fallback imported</td><td>Go release (fallback); OS (primary)</td><td><code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code></td></tr>
+<tr data-type="bundled"><td>Rust (webpki-roots crate)</td><td><span class="badge badge-bundled">Bundled</span></td><td>Mozilla roots at compile time</td><td>Compiled into binary</td><td><code>cargo update</code> + rebuild</td><td>Application-level: use <code>rustls-native-certs</code> instead</td></tr>
+<tr data-type="os"><td>Rust (native-tls / rustls-native-certs)</td><td><span class="badge badge-os">OS Store</span></td><td>Platform native</td><td>N/A</td><td>OS update</td><td><code>SSL_CERT_FILE</code> (Linux)</td></tr>
+<tr data-type="bundled"><td>Dart / Flutter</td><td><span class="badge badge-bundled">Bundled</span></td><td>BoringSSL-derived roots</td><td>Compiled into Dart VM</td><td>SDK release</td><td><code>SecurityContext</code> API</td></tr>
+<tr data-type="bundled"><td>Deno</td><td><span class="badge badge-bundled">Bundled</span></td><td>Mozilla roots via webpki-roots</td><td>Compiled into binary</td><td>Deno release</td><td><code>DENO_TLS_CA_STORE=system</code>, <code>DENO_CERT</code></td></tr>
+<tr data-type="bundled"><td>Bun</td><td><span class="badge badge-bundled">Bundled</span></td><td>Mozilla roots compiled in</td><td>Compiled into binary</td><td>Bun release</td><td>Override via config</td></tr>
+<tr data-type="os"><td>Ruby</td><td><span class="badge badge-os">OS Store</span></td><td>System OpenSSL</td><td>N/A</td><td>OS update</td><td><code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code></td></tr>
+<tr data-type="os"><td>PHP</td><td><span class="badge badge-os">OS Store</span></td><td>System OpenSSL / libcurl</td><td>N/A</td><td>OS update</td><td><code>openssl.cafile</code> in php.ini</td></tr>
+<tr data-type="os"><td>.NET / C#</td><td><span class="badge badge-os">OS Store</span></td><td>Platform native</td><td>N/A</td><td>OS update</td><td><code>X509ChainPolicy.CustomTrustStore</code> (.NET 5+)</td></tr>
+<tr data-type="fallback"><td>Perl (IO::Socket::SSL)</td><td><span class="badge badge-fallback">Fallback</span></td><td>OS primary; Mozilla::CA fallback</td><td><code>Mozilla/CA/cacert.pem</code> on CPAN</td><td>OS (primary); <code>cpan Mozilla::CA</code> (fallback)</td><td><code>SSL_CERT_FILE</code>, <code>SSL_ca_file</code></td></tr>
+<tr data-type="fallback"><td>Erlang/OTP (25+)</td><td><span class="badge badge-fallback">Fallback</span></td><td>OS primary; certifi fallback (&lt;25)</td><td>hex.pm certifi package</td><td>OS (primary); hex.pm (fallback)</td><td><code>cacertfile</code> option</td></tr>
+<tr data-type="os"><td>Swift</td><td><span class="badge badge-os">OS Store</span></td><td>Security.framework (Apple) / OpenSSL (Linux)</td><td>N/A</td><td>OS update</td><td><code>SecTrustSetAnchorCertificates()</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- CLI TOOLS -->
+<h2 class="section-title">CLI Tools &amp; Package Managers</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Software</th><th>Trust Source</th><th>Bundle Origin</th><th>Notes</th><th>Override</th></tr></thead>
+<tbody>
+<tr data-type="os"><td>curl (system)</td><td><span class="badge badge-os">OS Store</span></td><td>System OpenSSL / SecureTransport</td><td>macOS system curl uses Keychain; Linux uses OpenSSL paths</td><td><code>CURL_CA_BUNDLE</code>, <code>--cacert</code></td></tr>
+<tr data-type="bundled"><td>curl (Homebrew / static)</td><td><span class="badge badge-bundled">Bundled</span></td><td>Homebrew <code>ca-certificates</code> formula</td><td>Points to <code>$(brew --prefix)/share/ca-certificates/cacert.pem</code></td><td><code>CURL_CA_BUNDLE</code>, <code>--cacert</code></td></tr>
+<tr data-type="os"><td>wget</td><td><span class="badge badge-os">OS Store</span></td><td>System OpenSSL</td><td>Uses compile-time CA path</td><td><code>--ca-certificate</code></td></tr>
+<tr data-type="os"><td>git</td><td><span class="badge badge-os">OS Store</span></td><td>System OpenSSL / libcurl</td><td>Inherits from linked libcurl</td><td><code>http.sslCAInfo</code>, <code>GIT_SSL_CAINFO</code></td></tr>
+<tr data-type="bundled"><td>pip</td><td><span class="badge badge-bundled">Bundled</span></td><td>Vendored certifi</td><td>Ships certifi inside pip itself</td><td><code>--cert</code>, <code>PIP_CERT</code></td></tr>
+<tr data-type="bundled"><td>npm / yarn</td><td><span class="badge badge-bundled">Bundled</span></td><td>Inherits from Node.js (compiled-in Mozilla)</td><td>Uses Node.js TLS, which bundles roots</td><td><code>NODE_EXTRA_CA_CERTS</code>, <code>cafile</code> in .npmrc</td></tr>
+<tr data-type="bundled"><td>cargo (Rust, official builds)</td><td><span class="badge badge-bundled">Bundled</span></td><td>webpki-roots (compiled-in Mozilla)</td><td>Official builds use rustls + webpki-roots; distro builds may use native-tls</td><td><code>CARGO_HTTP_CAINFO</code>, <code>SSL_CERT_FILE</code></td></tr>
+<tr data-type="os"><td>docker CLI</td><td><span class="badge badge-os">OS Store</span></td><td>Go crypto/tls (OS store)</td><td>Static builds may include fallback bundle</td><td><code>SSL_CERT_FILE</code></td></tr>
+<tr data-type="os"><td>kubectl</td><td><span class="badge badge-os">OS Store</span></td><td>Go crypto/tls (OS store)</td><td></td><td><code>--certificate-authority</code></td></tr>
+<tr data-type="os"><td>terraform / opentofu</td><td><span class="badge badge-os">OS Store</span></td><td>Go crypto/tls (OS store)</td><td></td><td><code>SSL_CERT_FILE</code></td></tr>
+<tr data-type="bundled"><td>AWS CLI v2</td><td><span class="badge badge-bundled">Bundled</span></td><td>certifi (via botocore)</td><td><code>botocore/cacert.pem</code> in install dir</td><td><code>AWS_CA_BUNDLE</code></td></tr>
+<tr data-type="bundled"><td>gcloud SDK</td><td><span class="badge badge-bundled">Bundled</span></td><td>certifi (vendored)</td><td><code>lib/third_party/certifi/cacert.pem</code></td><td><code>CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE</code></td></tr>
+<tr data-type="bundled"><td>az (Azure CLI)</td><td><span class="badge badge-bundled">Bundled</span></td><td>Python certifi (vendored)</td><td>Python-based; ships certifi internally</td><td><code>REQUESTS_CA_BUNDLE</code></td></tr>
+<tr data-type="os"><td>apt / dpkg</td><td><span class="badge badge-os">OS Store</span></td><td>System OpenSSL</td><td></td><td><code>Acquire::https::CAinfo</code></td></tr>
+<tr data-type="os"><td>yum / dnf</td><td><span class="badge badge-os">OS Store</span></td><td>System OpenSSL / NSS</td><td></td><td><code>sslcacert</code> in repo config</td></tr>
+<tr data-type="os"><td>Homebrew</td><td><span class="badge badge-os">OS Store</span></td><td>System Ruby → OS OpenSSL</td><td>Uses system curl for downloads</td><td>N/A</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- SERVER SOFTWARE -->
+<h2 class="section-title">Server Software</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Software</th><th>Trust Source</th><th>Notes</th><th>Override</th></tr></thead>
+<tbody>
+<tr data-type="os"><td>nginx</td><td><span class="badge badge-os">OS Store</span></td><td>Uses system OpenSSL; CA for upstream proxying configured per-directive</td><td><code>proxy_ssl_trusted_certificate</code></td></tr>
+<tr data-type="os"><td>Apache httpd</td><td><span class="badge badge-os">OS Store</span></td><td>mod_ssl uses system OpenSSL</td><td><code>SSLCACertificateFile</code></td></tr>
+<tr data-type="os"><td>HAProxy</td><td><span class="badge badge-os">OS Store</span></td><td>Uses system OpenSSL</td><td><code>ca-file</code> in config</td></tr>
+<tr data-type="os"><td>Envoy</td><td><span class="badge badge-os">OS Store</span></td><td>Uses BoringSSL, reads system paths</td><td><code>trusted_ca</code> in cluster config</td></tr>
+<tr data-type="os"><td>Caddy</td><td><span class="badge badge-os">OS Store</span></td><td>Go crypto/tls (OS store)</td><td><code>tls_trusted_ca_certs</code></td></tr>
+<tr data-type="os"><td>Traefik</td><td><span class="badge badge-os">OS Store</span></td><td>Go crypto/tls (OS store)</td><td><code>rootCAs</code> in config</td></tr>
+<tr data-type="os"><td>PostgreSQL</td><td><span class="badge badge-os">OS Store</span></td><td>Uses system OpenSSL for SSL connections</td><td><code>ssl_ca_file</code></td></tr>
+<tr data-type="os"><td>MySQL / MariaDB</td><td><span class="badge badge-os">OS Store</span></td><td>Uses system OpenSSL / yaSSL</td><td><code>ssl-ca</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- DESKTOP / ELECTRON APPS -->
+<h2 class="section-title">Desktop &amp; Electron Apps</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Software</th><th>Trust Source</th><th>Notes</th><th>Update Mechanism</th></tr></thead>
+<tbody>
+<tr data-type="hybrid"><td>VS Code</td><td><span class="badge badge-hybrid">Hybrid</span></td><td>Electron (Chromium) — Chrome Root Store + OS supplement</td><td>App auto-update</td></tr>
+<tr data-type="hybrid"><td>Slack Desktop</td><td><span class="badge badge-hybrid">Hybrid</span></td><td>Electron (Chromium) — Chrome Root Store + OS supplement</td><td>App auto-update</td></tr>
+<tr data-type="hybrid"><td>Discord</td><td><span class="badge badge-hybrid">Hybrid</span></td><td>Electron (Chromium) — Chrome Root Store + OS supplement</td><td>App auto-update</td></tr>
+<tr data-type="hybrid"><td>Teams (new)</td><td><span class="badge badge-hybrid">Hybrid</span></td><td>Electron/WebView2 — uses Edge certificate verifier</td><td>App auto-update</td></tr>
+<tr data-type="bundled"><td>Thunderbird</td><td><span class="badge badge-bundled">Bundled</span></td><td>Mozilla NSS (same as Firefox)</td><td>Thunderbird release</td></tr>
+<tr data-type="os"><td>Outlook (native)</td><td><span class="badge badge-os">OS Store</span></td><td>Uses Windows CryptoAPI / macOS Security.framework</td><td>OS update</td></tr>
+<tr data-type="hybrid"><td>Zoom</td><td><span class="badge badge-hybrid">Hybrid</span></td><td>Own embedded bundle + platform store supplement</td><td>App auto-update</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- OPERATING SYSTEMS -->
+<h2 class="section-title">Operating System Trust Stores</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>OS</th><th>Bundle Path</th><th>Package</th><th>Upstream Source</th><th>Update Command</th></tr></thead>
+<tbody>
+<tr><td>macOS</td><td><code>/System/Library/Keychains/SystemRootCertificates.keychain</code></td><td>Shipped with OS</td><td>Apple Root Program</td><td>Software Update (OS-level)</td></tr>
+<tr><td>iOS / iPadOS</td><td>Embedded in OS image</td><td>Shipped with OS</td><td>Apple Root Program</td><td>iOS update only</td></tr>
+<tr><td>Windows</td><td>Registry + on-demand download via <code>AuthRoot.stl</code></td><td>Built into OS</td><td>Microsoft Root Program</td><td>Windows Update + auto-fetch</td></tr>
+<tr><td>Ubuntu / Debian</td><td><code>/etc/ssl/certs/ca-certificates.crt</code></td><td><code>ca-certificates</code></td><td>Mozilla NSS</td><td><code>apt update && apt upgrade ca-certificates</code></td></tr>
+<tr><td>RHEL / Fedora</td><td><code>/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem</code></td><td><code>ca-certificates</code></td><td>Mozilla NSS</td><td><code>dnf update ca-certificates && update-ca-trust</code></td></tr>
+<tr><td>Alpine</td><td><code>/etc/ssl/certs/ca-certificates.crt</code></td><td><code>ca-certificates</code></td><td>Mozilla NSS</td><td><code>apk upgrade ca-certificates</code></td></tr>
+<tr><td>Arch Linux</td><td><code>/etc/ca-certificates/extracted/tls-ca-bundle.pem</code></td><td><code>ca-certificates</code></td><td>Mozilla NSS</td><td><code>pacman -Syu ca-certificates</code></td></tr>
+<tr><td>SUSE / openSUSE</td><td><code>/etc/ssl/ca-bundle.pem</code></td><td><code>ca-certificates</code></td><td>Mozilla NSS</td><td><code>zypper update ca-certificates</code></td></tr>
+<tr><td>Amazon Linux 2 / 2023</td><td><code>/etc/pki/tls/certs/ca-bundle.crt</code></td><td><code>ca-certificates</code></td><td>Mozilla NSS</td><td><code>yum update ca-certificates</code></td></tr>
+<tr><td>NixOS</td><td><code>/etc/ssl/certs/ca-bundle.crt</code></td><td><code>cacert</code></td><td>Mozilla NSS</td><td><code>nixos-rebuild switch</code></td></tr>
+<tr><td>Android</td><td><code>/system/etc/security/cacerts/</code></td><td>AOSP ca-certificates</td><td>AOSP-curated (Mozilla-derived)</td><td>OS OTA update only</td></tr>
+<tr><td>ChromeOS</td><td><code>/usr/share/chromeos-ca-certificates/</code> + Chrome Root Store</td><td>chromeos-base package</td><td>Mozilla NSS + Chrome Root Store</td><td>OS auto-update</td></tr>
+<tr><td>FreeBSD</td><td><code>/usr/local/share/certs/ca-root-nss.crt</code></td><td><code>ca_root_nss</code></td><td>Mozilla NSS</td><td><code>pkg upgrade ca_root_nss</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- CONTAINER / BUILD IMAGES -->
+<h2 class="section-title">Container &amp; Build Environments</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Environment</th><th>Trust Source</th><th>Concern</th><th>Remediation</th></tr></thead>
+<tbody>
+<tr data-type="bundled"><td>Docker base images</td><td><span class="badge badge-bundled">Bundled</span></td><td>CA bundle frozen at image build time; never auto-updates</td><td>Rebuild image from updated base, or <code>RUN apt-get update && apt-get install -y ca-certificates</code></td></tr>
+<tr data-type="bundled"><td>distroless images</td><td><span class="badge badge-bundled">Bundled</span></td><td>Minimal images may include stale CA bundles</td><td>Rebuild from updated distroless base</td></tr>
+<tr data-type="os"><td>CI runners (GitHub Actions, GitLab CI)</td><td><span class="badge badge-os">OS Store</span></td><td>Runner images updated by provider periodically</td><td>Provider updates runner images</td></tr>
+<tr data-type="bundled"><td>Lambda / Cloud Functions</td><td><span class="badge badge-bundled">Bundled</span></td><td>Runtime CA bundle frozen in deployment image</td><td>Provider-managed; user may need to bundle own certs</td></tr>
+<tr data-type="bundled"><td>scratch images (Go/Rust static)</td><td><span class="badge badge-bundled">Bundled</span></td><td>Empty filesystem — app must COPY certs in or use compiled-in roots</td><td>Rebuild binary with updated webpki-roots / Go fallback</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- EMBEDDED / IoT -->
+<h2 class="section-title">Embedded &amp; IoT</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Platform</th><th>Trust Source</th><th>Concern</th><th>Update Path</th></tr></thead>
+<tbody>
+<tr data-type="bundled"><td>ESP-IDF (ESP32 / ESP32-S3)</td><td><span class="badge badge-bundled">Bundled</span></td><td>Full Mozilla root list compiled into flash via mbedTLS <code>gen_crt_bundle.py</code></td><td>OTA firmware update only</td></tr>
+<tr data-type="bundled"><td>Network appliances (Cisco, Juniper, Fortinet)</td><td><span class="badge badge-bundled">Bundled</span></td><td>Vendor-curated trust store baked into firmware</td><td>Firmware update from vendor</td></tr>
+<tr data-type="bundled"><td>Smart TVs / set-top boxes</td><td><span class="badge badge-bundled">Bundled</span></td><td>Typically frozen at manufacture; rarely updated</td><td>Firmware update (if vendor provides one)</td></tr>
+<tr data-type="bundled"><td>Automotive (infotainment / telematics)</td><td><span class="badge badge-bundled">Bundled</span></td><td>CA store baked into head-unit or TCU firmware</td><td>OTA or dealer service update</td></tr>
+<tr data-type="bundled"><td>Industrial controllers (PLCs, HMIs)</td><td><span class="badge badge-bundled">Bundled</span></td><td>mbedTLS or wolfSSL with compiled-in roots</td><td>Vendor firmware update (infrequent)</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="scanner-cta">
+  <h3>Scan Your System</h3>
+  <p>The <strong>emudhra-scanner</strong> tool checks whether any compromised eMudhra intermediate CAs are still trusted on your machine.</p>
+  <code>cargo install --path scanner && emudhra-scanner</code>
+  <p style="margin-top: 0.5rem; font-size: 0.85rem; opacity: 0.8;">Cross-platform (Linux, macOS, Windows). Scans OS store, Java cacerts, Python certifi, Firefox/NSS, curl bundles, and more. Use <code>--scan-binary &lt;path&gt;</code> for any compiled binary.</p>
+</div>
+
+<div class="context-box">
+  <h2>Worst-case patch lag</h2>
+  <p><strong>Android devices</strong> on old OS versions may never receive the ca-certificates update. Carrier-locked phones on Android 12 and earlier are the longest tail.</p>
+  <p><strong>Docker images</strong> built before the distrust and never rebuilt carry the compromised CAs indefinitely. Any containerized service that validates certificates against its baked-in bundle remains exposed.</p>
+  <p><strong>Java applications</strong> deployed with a custom <code>javax.net.ssl.trustStore</code> pointing to a stale <code>cacerts</code> file will not benefit from a JDK upgrade.</p>
+  <p><strong>Embedded / IoT devices</strong> that shipped with the eMudhra root in their firmware and receive no updates will trust the compromised intermediates permanently.</p>
+  <p><strong>Compiled Rust binaries</strong> using <code>webpki-roots</code> have Mozilla roots baked in at compile time. Every deployed binary must be rebuilt with an updated crate version.</p>
+</div>
+
+</div>
+
+<footer>
+  <p>Data compiled from vendor documentation, source code, and post-eMudhra incident analysis (October 2026).</p>
+  <p>Sources: <a href="https://support.apple.com/en-us/149555">Apple</a> · <a href="https://bugzilla.mozilla.org/show_bug.cgi?id=2083449">Mozilla</a> · <a href="https://www.chromium.org/Home/chromium-security/root-ca-policy/">Chrome Root Program</a> · <a href="https://www.ccadb.org/">CCADB</a></p>
+</footer>
+
+<script>
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const f = btn.dataset.filter;
+    document.querySelectorAll('tr[data-type]').forEach(row => {
+      row.style.display = (f === 'all' || row.dataset.type === f) ? '' : 'none';
+    });
+  });
+});
+</script>
+</body>
+</html>

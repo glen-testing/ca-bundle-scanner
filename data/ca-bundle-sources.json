@@ -1,0 +1,3303 @@
+{
+  "$schema": "./ca-bundle-sources.schema.json",
+  "metadata": {
+    "title": "CA Bundle Tracker",
+    "description": "Which software ships its own Certificate Authority (CA) bundle and which uses the operating system store, with update paths and remediation after the October 2026 eMudhra intermediate CA compromise.",
+    "updated": "2026-11-02",
+    "incident": {
+      "name": "The eMudhra intermediate CA compromise (October 2026)",
+      "compromised_keys": 8,
+      "tls_keys": 6,
+      "code_signing_keys": 2,
+      "ca_certificates": 16,
+      "summary": "On 2026-10-17 Mozilla received a report that the private keys of 8 eMudhra intermediate CA certificates were compromised: 6 TLS intermediates trusted by Chrome, Mozilla, Microsoft and Apple, and 2 code-signing intermediates trusted by Microsoft. Mozilla's comment 5 on bug 2083449 states that all 8 private keys were integers less than 256; a later public comment (comment 67) lists the values.",
+      "sources": [
+        {
+          "url": "https://bugzilla.mozilla.org/show_bug.cgi?id=2083449",
+          "title": "Mozilla bug 2083449",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://bugzilla.mozilla.org/rest/bug/2083449/comment",
+          "title": "Mozilla bug 2083449 comments (REST API)",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://support.apple.com/en-us/149555",
+          "title": "Apple support 149555: eMudhra certificate blocking",
+          "retrieved": "2026-11-02"
+        }
+      ]
+    },
+    "notices": [
+      {
+        "id": "aaa-cross-sign",
+        "heading": "The Sectigo AAA Certificate Services cross-sign path",
+        "paragraphs": [
+          "The compromised intermediates were cross-signed by Sectigo's AAA Certificate Services root. Any store that still trusts AAA for TLS accepts the cross-signed copies even after the emSign roots are gone.",
+          "Mozilla removed AAA's websites trust bit in April 2025 (bug 1957685, landed in NSS on 2025-04-16). Mozilla-derived bundles taken before that, such as old certifi copies, still trust it. Apple and Microsoft kept trusting AAA and blocked the intermediates by other means (configuration data and the disallowed CTL).",
+          "Example: on Amazon Linux 2023 the `awscli-2-2.33.15` package ships `/usr/lib/python3.9/site-packages/awscli/botocore/cacert.pem` (dated 2026-02-06) containing AAA Certificate Services. AWS removed AAA from the bundle in AWS CLI 2.38.4."
+        ],
+        "sources": [
+          {
+            "url": "https://bugzilla.mozilla.org/show_bug.cgi?id=1957685",
+            "title": "Mozilla bug 1957685: remove websites trust bit from AAA Certificate Services",
+            "retrieved": "2026-11-02"
+          },
+          {
+            "url": "https://raw.githubusercontent.com/aws/aws-cli/v2/CHANGELOG.rst",
+            "title": "AWS CLI v2 changelog",
+            "retrieved": "2026-11-02"
+          },
+          {
+            "url": "https://support.apple.com/en-us/149555",
+            "title": "Apple support 149555: eMudhra certificate blocking",
+            "retrieved": "2026-11-02"
+          },
+          {
+            "url": "https://www.microsoft.com/en-us/msrc/blog/2026/10/microsoft-response-to-compromised-emudhra-certificate-authority-keys",
+            "title": "MSRC: Microsoft response to compromised eMudhra CA keys",
+            "retrieved": "2026-11-02"
+          }
+        ]
+      },
+      {
+        "id": "macos-cli-gap",
+        "heading": "macOS command-line tools are not covered by Apple's fix",
+        "paragraphs": [
+          "Apple's configuration-data block protects Safari, Mail and apps using Apple's networking frameworks. Tools that read `/etc/ssl/cert.pem` (Apple names curl, git, python3, ruby, perl and openssl) can still accept the certificates until a future macOS update.",
+          "Apple's article gives optional steps to remove emSign ECC Root CA - G3 and AAA Certificate Services from `/etc/ssl/cert.pem`. Homebrew's merged `cert.pem` re-imports macOS keychain roots, so check it as well."
+        ],
+        "sources": [
+          {
+            "url": "https://support.apple.com/en-us/149555",
+            "title": "Apple support 149555: eMudhra certificate blocking",
+            "retrieved": "2026-11-02"
+          }
+        ]
+      },
+      {
+        "id": "response-timeline",
+        "heading": "How each vendor pushed the block",
+        "paragraphs": [
+          "2026-10-17: reported to Mozilla at 20:06 UTC; OneCRL entries finished at 22:59 UTC and reached Firefox through Remote Settings the same day. Google shipped a CRLSet blocking the intermediates' public keys at 19:45 UTC.",
+          "2026-10-19: Apple began blocking the 12 TLS certificates through configuration data (the emSign ECC Root CA - G3 root followed on 2026-10-23). Google Play services delivered the Android block around 22:00 UTC.",
+          "2026-10-20: Microsoft updated the Windows disallowed CTL; Mozilla shipped an unscheduled Firefox Release and ESR build for users without Remote Settings.",
+          "2026-10-26 and 2026-10-27: Microsoft's out-of-band Windows update and Edge trust-list change removed 7 certificates; Chrome removed emSign ECC Root CA - G3 from the Chrome Root Store."
+        ],
+        "sources": [
+          {
+            "url": "https://bugzilla.mozilla.org/show_bug.cgi?id=2083449",
+            "title": "Mozilla bug 2083449",
+            "retrieved": "2026-11-02"
+          },
+          {
+            "url": "https://blog.google/security/protecting-chrome-and-android-users-from-compromised-emudhra-intermediate-ca-certificates/",
+            "title": "Google: protecting Chrome and Android users from compromised eMudhra intermediates",
+            "retrieved": "2026-11-02"
+          },
+          {
+            "url": "https://support.apple.com/en-us/149555",
+            "title": "Apple support 149555: eMudhra certificate blocking",
+            "retrieved": "2026-11-02"
+          },
+          {
+            "url": "https://www.microsoft.com/en-us/msrc/blog/2026/10/microsoft-response-to-compromised-emudhra-certificate-authority-keys",
+            "title": "MSRC: Microsoft response to compromised eMudhra CA keys",
+            "retrieved": "2026-11-02"
+          }
+        ]
+      },
+      {
+        "id": "patch-lag",
+        "heading": "Where fixes arrive last",
+        "paragraphs": [
+          "Android 13 and older without Google Play services: the root store lives on the system partition and changes only with a vendor OS update.",
+          "Container images built before the fix keep their bundle until rebuilt; so do Lambda container-image functions and anything with a vendored certifi.",
+          "Java applications with a custom `javax.net.ssl.trustStore` or `jssecacerts` file gain nothing from a JDK update.",
+          "Binaries built with Rust `webpki-roots` or ESP-IDF's certificate bundle carry the roots compiled in; each one must be rebuilt and redeployed."
+        ],
+        "sources": [
+          {
+            "url": "https://source.android.com/docs/core/ota/modular-system/conscrypt",
+            "title": "Android: Conscrypt module",
+            "retrieved": "2026-11-02"
+          },
+          {
+            "url": "https://docs.oracle.com/en/java/javase/21/security/java-secure-socket-extension-jsse-reference-guide.html",
+            "title": "JSSE reference guide",
+            "retrieved": "2026-11-02"
+          },
+          {
+            "url": "https://raw.githubusercontent.com/rustls/webpki-roots/main/README.md",
+            "title": "webpki-roots README",
+            "retrieved": "2026-11-02"
+          }
+        ]
+      }
+    ],
+    "glossary": [
+      {
+        "term": "APEX",
+        "definition": "Android Pony EXpress, the container format for updatable Android system modules such as Conscrypt."
+      },
+      {
+        "term": "CA",
+        "definition": "Certificate Authority: an entity whose certificate vouches for others."
+      },
+      {
+        "term": "CCADB",
+        "definition": "Common CA Database, shared by the major root programs."
+      },
+      {
+        "term": "CRLSet",
+        "definition": "Chrome's pushed list of blocked certificates and public keys, delivered by the component updater."
+      },
+      {
+        "term": "CRLite",
+        "definition": "Firefox's compressed revocation data for all publicly trusted certificates."
+      },
+      {
+        "term": "CTL",
+        "definition": "Certificate Trust List; Windows downloads one of trusted roots and one of disallowed certificates."
+      },
+      {
+        "term": "ESR",
+        "definition": "Extended Support Release (Firefox)."
+      },
+      {
+        "term": "JDK",
+        "definition": "Java Development Kit."
+      },
+      {
+        "term": "NSS",
+        "definition": "Network Security Services, Mozilla's TLS and certificate library; `certdata.txt` holds its root list."
+      },
+      {
+        "term": "OneCRL",
+        "definition": "Mozilla's pushed list of revoked intermediate certificates, delivered over Remote Settings."
+      },
+      {
+        "term": "OS",
+        "definition": "Operating system."
+      },
+      {
+        "term": "OTA",
+        "definition": "Over the air: an update delivered to the device without a cable or reinstall."
+      },
+      {
+        "term": "PEM",
+        "definition": "Privacy-Enhanced Mail: the base64 text form of a certificate (`-----BEGIN CERTIFICATE-----`)."
+      },
+      {
+        "term": "SPKI",
+        "definition": "SubjectPublicKeyInfo: the public key field of a certificate; blocking by SPKI hash covers every certificate with that key."
+      },
+      {
+        "term": "TLS",
+        "definition": "Transport Layer Security, the protocol behind HTTPS."
+      },
+      {
+        "term": "Trust source",
+        "definition": "Where software gets the roots it trusts: Bundled, OS store, Fallback, Hybrid, or Configured (no default; the operator supplies a CA file)."
+      }
+    ]
+  },
+  "sections": [
+    {
+      "category": "browser",
+      "title": "Browsers",
+      "caption": "Web browsers: root store, update path and the channel that blocked the eMudhra intermediates."
+    },
+    {
+      "category": "language_runtime",
+      "title": "Language runtimes and standard libraries",
+      "caption": "Runtimes and TLS libraries: default roots and the switches that move them to the OS store."
+    },
+    {
+      "category": "cli_tool",
+      "title": "Command-line tools and package managers",
+      "caption": "Command-line tools: where each reads its roots, per platform where it differs."
+    },
+    {
+      "category": "server",
+      "title": "Server software (as TLS clients)",
+      "caption": "Servers connecting to TLS upstreams: most use only the CA file you configure."
+    },
+    {
+      "category": "desktop",
+      "title": "Desktop and Electron apps",
+      "caption": "Desktop applications built on Electron, WebView2, NSS or the OS."
+    },
+    {
+      "category": "operating_system",
+      "title": "Operating system trust stores",
+      "caption": "OS trust stores: bundle paths, update commands and pushed block lists."
+    },
+    {
+      "category": "container",
+      "title": "Containers and build environments",
+      "caption": "Images and hosted runtimes: the bundle is fixed when the image is built."
+    },
+    {
+      "category": "embedded",
+      "title": "Embedded and IoT",
+      "caption": "Firmware-based devices (IoT = Internet of Things): roots are compiled into the image or vendor-managed."
+    }
+  ],
+  "entries": [
+    {
+      "id": "chrome",
+      "name": "Chrome / Chromium",
+      "category": "browser",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux",
+        "android",
+        "chromeos"
+      ],
+      "bundle_origin": "Chrome Root Store",
+      "location": "Compiled into the browser; updated as a component",
+      "update_mechanism": "Component updater (typically within 24 hours) and browser releases",
+      "override": "Locally installed roots are honoured: Windows Local Machine, Current User, Enterprise and Group Policy stores; macOS Default and System keychains",
+      "revocation_channel": [
+        "CRLSet"
+      ],
+      "remediation": "Nothing to do on a default install: Google pushed a CRLSet blocking the intermediates' public keys on 2026-10-17 (19:45 UTC) and removes emSign ECC Root CA - G3 from the Chrome Root Store from 2026-10-27. Installs with component updates disabled need a browser update.",
+      "version_notes": "Chrome Root Store used from Chrome 105 on Windows and macOS (default by 108), 114 on Linux and ChromeOS, 114 on Android (default by 115).",
+      "notes": "iOS Chrome uses the Apple verifier and is outside the Chrome Root Store.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://chromium.googlesource.com/chromium/src/+/main/net/data/ssl/chrome_root_store/faq.md",
+          "title": "Chrome Root Store FAQ",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://blog.google/security/protecting-chrome-and-android-users-from-compromised-emudhra-intermediate-ca-certificates/",
+          "title": "Google: protecting Chrome and Android users from compromised eMudhra intermediates",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://googlechrome.github.io/chromerootprogram/",
+          "title": "Chrome Root Program",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "edge",
+      "name": "Microsoft Edge",
+      "category": "browser",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "bundle_origin": "Microsoft Trusted Root Program list with Edge's built-in verifier",
+      "location": "Compiled into the browser; updated as a component",
+      "update_mechanism": "Component updater and browser releases",
+      "override": "Locally installed roots are still trusted",
+      "revocation_channel": [
+        "CRLSet"
+      ],
+      "remediation": "Keep component updates enabled: Microsoft delivered a CRLSet update to Edge and WebView2, and removed 7 certificates from Edge's trust list on 2026-10-27.",
+      "version_notes": "Built-in verifier is the default on Windows and macOS from Edge 112; the `MicrosoftRootStoreEnabled` policy was removed in Edge 115.",
+      "notes": "Edge on iOS and iPadOS uses the Apple root store and verifier. Microsoft's page says Linux and Android move to the built-in verifier in a future release.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-security-cert-verification",
+          "title": "Microsoft Edge certificate verification",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://www.microsoft.com/en-us/msrc/blog/2026/10/microsoft-response-to-compromised-emudhra-certificate-authority-keys",
+          "title": "MSRC: Microsoft response to compromised eMudhra CA keys",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "firefox",
+      "name": "Firefox",
+      "category": "browser",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux",
+        "android"
+      ],
+      "bundle_origin": "Mozilla root store (NSS `certdata.txt`)",
+      "location": "Built-in roots module `nssckbi` (`libnssckbi.so` / `.dylib` / `.dll`)",
+      "update_mechanism": "OneCRL and intermediate data over Remote Settings (no release needed), plus browser releases",
+      "override": "`security.enterprise_roots.enabled` (default `true` since Firefox 120; reads OS-added roots on Windows and macOS only)",
+      "revocation_channel": [
+        "OneCRL"
+      ],
+      "remediation": "Nothing to do with Remote Settings on: Mozilla added the intermediates to OneCRL on 2026-10-17. Profiles with Remote Settings disabled need the unscheduled Release/ESR build of 2026-10-20 or later.",
+      "version_notes": "Built-in roots module rewritten in Rust in Firefox 108. Enterprise roots on by default from Firefox 120 (before that, only after a man-in-the-middle error).",
+      "notes": "CRLite revocation checking is on by default on desktop from Firefox 137, and intermediate preloading is on by default in source. Distribution builds can differ: Fedora's Firefox uses system NSS and requires `p11-kit-trust`, so it also sees the OS store.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://bugzilla.mozilla.org/show_bug.cgi?id=2083449",
+          "title": "Mozilla bug 2083449",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://hg.mozilla.org/mozilla-central/raw-file/tip/modules/libpref/init/StaticPrefList.yaml",
+          "title": "mozilla-central StaticPrefList.yaml",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://hacks.mozilla.org/2025/08/crlite-fast-private-and-comprehensive-certificate-revocation-checking-in-firefox/",
+          "title": "Mozilla Hacks: CRLite in Firefox",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://bugzilla.mozilla.org/show_bug.cgi?id=1789520",
+          "title": "Mozilla bug 1789520: Rust nssckbi",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "safari",
+      "name": "Safari",
+      "category": "browser",
+      "trust_source": "os",
+      "platforms": [
+        "macos",
+        "ios"
+      ],
+      "bundle_origin": "Apple Root Certificate Program",
+      "location": null,
+      "update_mechanism": "Apple certificate configuration data (automatic) and OS updates",
+      "override": null,
+      "revocation_channel": [
+        "Apple configuration data"
+      ],
+      "remediation": "Nothing to do: Apple blocks the 12 TLS certificates through configuration data from 2026-10-19, and the emSign ECC Root CA - G3 root from 2026-10-23.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://support.apple.com/en-us/149555",
+          "title": "Apple support 149555: eMudhra certificate blocking",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "brave",
+      "name": "Brave",
+      "category": "browser",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux",
+        "android"
+      ],
+      "bundle_origin": "Chrome Root Store (unmodified Chromium certificate verifier)",
+      "location": "Compiled into the browser",
+      "update_mechanism": "Browser releases; Brave uses Chrome's CRLSet component",
+      "override": "Same as Chrome",
+      "revocation_channel": [
+        "CRLSet"
+      ],
+      "remediation": "Keep Brave updated and component updates enabled; check `brave://components` for a current CRLSet.",
+      "version_notes": null,
+      "notes": "Brave on iOS uses the Apple store.",
+      "verified": false,
+      "unverified_note": "Brave documents Chrome's root store and a developer confirms CRLSet use, but no official source says root-store updates arrive by component update, and Brave published no eMudhra statement.",
+      "sources": [
+        {
+          "url": "https://github.com/brave/brave-browser/wiki/TLS-Policy",
+          "title": "Brave wiki: TLS policy",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://github.com/brave/brave-browser/issues/40929",
+          "title": "Brave issue 40929 (CRLSet component)",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "opera",
+      "name": "Opera",
+      "category": "browser",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux",
+        "android"
+      ],
+      "bundle_origin": "Chrome Root Store",
+      "location": "Compiled into the browser",
+      "update_mechanism": "Browser releases",
+      "override": "Locally trusted certificates are accepted",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Keep Opera updated.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "Opera states it trusts the Chrome Root Store; how (or whether) it receives root-store or CRLSet updates between releases is not documented.",
+      "sources": [
+        {
+          "url": "https://security.opera.com/en/?p=12007",
+          "title": "Opera security: root certificate policy",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "vivaldi",
+      "name": "Vivaldi",
+      "category": "browser",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux",
+        "android"
+      ],
+      "bundle_origin": "Chromium certificate verifier (assumed Chrome Root Store)",
+      "location": "Compiled into the browser",
+      "update_mechanism": "Browser releases",
+      "override": null,
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Keep Vivaldi updated.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "No official Vivaldi source describes its root store or CRLSet handling.",
+      "sources": [
+        {
+          "url": "https://vivaldi.com/blog/",
+          "title": "Vivaldi blog (no root store statement found)",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "tor-browser",
+      "name": "Tor Browser",
+      "category": "browser",
+      "trust_source": "bundled",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Mozilla root store (Firefox ESR base)",
+      "location": "`libnssckbi` in the install directory",
+      "update_mechanism": "Tor Browser releases (ESR cadence)",
+      "override": "`security.enterprise_roots.enabled` is off",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Update Tor Browser: its base profile disables Remote Settings intermediates, CRLite and enterprise roots, so the OneCRL push may not reach it before a release.",
+      "version_notes": null,
+      "notes": "Checked in the `tor-browser-140.0esr-15.0-1` profile: CRLite mode 0, intermediate preloading off.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://gitlab.torproject.org/tpo/applications/tor-browser/-/raw/tor-browser-140.0esr-15.0-1/browser/app/profile/001-base-profile.js",
+          "title": "Tor Browser 15.0 base profile",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "arc",
+      "name": "Arc",
+      "category": "browser",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "bundle_origin": "Chromium certificate verifier (assumed Chrome Root Store)",
+      "location": "Compiled into the browser",
+      "update_mechanism": "Browser releases",
+      "override": null,
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Plan a move: Arc is reported to end on 2026-12-22; until then keep it updated.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "No official Browser Company source on Arc's root store or CRLSet handling; the end-of-life date comes from press coverage.",
+      "sources": [
+        {
+          "url": "https://techcrunch.com/2026/10/22/arc-browser-sunsets-december-22-as-the-browser-company-doubles-down-on-dia/",
+          "title": "TechCrunch: Arc browser sunsets December 22",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "python-requests",
+      "name": "Python (requests / certifi)",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Mozilla roots repackaged by the certifi project",
+      "location": "`certifi/cacert.pem` in site-packages (`python -m certifi` prints the path)",
+      "update_mechanism": "`pip install --upgrade certifi` in every environment",
+      "override": "`REQUESTS_CA_BUNDLE`, then `CURL_CA_BUNDLE`; `verify=` per call. requests does not read `SSL_CERT_FILE`.",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Upgrade certifi in every virtual environment, image and vendored copy, or set `REQUESTS_CA_BUNDLE` to the patched OS bundle.",
+      "version_notes": null,
+      "notes": "The environment variables apply when `trust_env` is on (the default for `requests.get`).",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://requests.readthedocs.io/en/latest/user/advanced/",
+          "title": "Requests: advanced usage (CA certificates)",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/psf/requests/main/src/requests/utils.py",
+          "title": "requests source: utils.py",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "python-stdlib",
+      "name": "Python (standard library ssl)",
+      "category": "language_runtime",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS store",
+      "location": "OpenSSL default paths (`ssl.get_default_verify_paths()`); on Windows also the system ROOT and CA stores",
+      "update_mechanism": "OS `ca-certificates` update",
+      "override": "`SSL_CERT_FILE`, `SSL_CERT_DIR` (the OpenSSL environment keys); `cafile=` in `ssl.create_default_context()`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS trust store. See the python.org macOS row for the installer build.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://docs.python.org/3/library/ssl.html",
+          "title": "Python docs: ssl module",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "python-macos-installer",
+      "name": "Python (python.org macOS installer)",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "platforms": [
+        "macos"
+      ],
+      "bundle_origin": "certifi (Mozilla roots)",
+      "location": "certifi in the framework's site-packages, installed by `Install Certificates.command`",
+      "update_mechanism": "Re-run `Install Certificates.command` or `pip install --upgrade certifi`",
+      "override": "`SSL_CERT_FILE`, `SSL_CERT_DIR`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Re-run `/Applications/Python 3.x/Install Certificates.command` after certifi publishes a fixed bundle. Apple's configuration-data fix does not reach this OpenSSL.",
+      "version_notes": null,
+      "notes": "The python.org build ships its own OpenSSL and does not read the macOS keychain.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/python/cpython/main/Mac/BuildScript/resources/ReadMe.rtf",
+          "title": "CPython macOS installer ReadMe",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "nodejs",
+      "name": "Node.js (official builds)",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Mozilla roots compiled in (`src/node_root_certs.h`)",
+      "location": "Compiled into the `node` binary",
+      "update_mechanism": "Node.js release",
+      "override": "`NODE_EXTRA_CA_CERTS` adds a PEM file; `--use-system-ca` or `NODE_USE_SYSTEM_CA=1` adds the OS store; `--use-openssl-ca` replaces the bundle with the OpenSSL default paths (`SSL_CERT_FILE` / `SSL_CERT_DIR`), not the Windows or macOS store",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Upgrade Node.js to a release with current bundled roots, or run with `--use-system-ca` so OS fixes apply.",
+      "version_notes": "`--use-system-ca`: v23.8.0, v22.15.0. `NODE_USE_SYSTEM_CA=1`: v24.6.0, v22.19.0 (the flag wins if both are set). `NODE_EXTRA_CA_CERTS`: v7.3.0.",
+      "notes": "`--use-system-ca` reads the Windows and macOS stores directly; elsewhere (v23.9.0+) it reads the OpenSSL file and directory.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/nodejs/node/main/doc/api/cli.md",
+          "title": "Node.js CLI documentation (main)",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/nodejs/node/v22.x/doc/api/cli.md",
+          "title": "Node.js CLI documentation (v22.x)",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "java-openjdk",
+      "name": "Java (upstream OpenJDK builds)",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OpenJDK root CA program (JEP 319, JDK 10+)",
+      "location": "`$JAVA_HOME/lib/security/cacerts`",
+      "update_mechanism": "JDK update release, or `keytool -delete`",
+      "override": "`-Djavax.net.ssl.trustStore=`; `lib/security/jssecacerts` takes precedence over `cacerts`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Update the JDK, and look for custom `javax.net.ssl.trustStore` files and `jssecacerts`, which a JDK update does not touch.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://openjdk.org/jeps/319",
+          "title": "JEP 319: Root certificates",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://docs.oracle.com/en/java/javase/21/security/java-secure-socket-extension-jsse-reference-guide.html",
+          "title": "JSSE reference guide",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "java-distro",
+      "name": "Java (Linux distribution JDKs)",
+      "category": "language_runtime",
+      "trust_source": "os",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "Regenerated from the OS trust store",
+      "location": "RHEL / Fedora: `/etc/pki/java/cacerts` (from `/etc/pki/ca-trust/extracted/java/`); Debian / Ubuntu: `/etc/ssl/certs/java/cacerts` (`ca-certificates-java`)",
+      "update_mechanism": "OS `ca-certificates` update (`update-ca-trust` / `update-ca-certificates`)",
+      "override": "`-Djavax.net.ssl.trustStore=`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS `ca-certificates` package; on Debian run `update-ca-certificates -f` if the Java keystore did not refresh.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://src.fedoraproject.org/rpms/ca-certificates/raw/rawhide/f/update-ca-trust.8.txt",
+          "title": "Fedora update-ca-trust(8)",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://salsa.debian.org/java-team/ca-certificates-java/-/raw/master/debian/README.Debian",
+          "title": "Debian ca-certificates-java README",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "go",
+      "name": "Go (standard library)",
+      "category": "language_runtime",
+      "trust_source": "fallback",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS store; roots from `golang.org/x/crypto/x509roots/fallback` only when the OS provides none",
+      "location": "Linux: first existing of `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem`, ... plus `/etc/ssl/certs`; Windows and macOS: platform verifier",
+      "update_mechanism": "OS update (primary); module update and rebuild (fallback roots)",
+      "override": "`SSL_CERT_FILE`, `SSL_CERT_DIR`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store. Binaries that import `x509roots/fallback` and run without system roots (for example in `scratch` images) need a rebuild with a newer module.",
+      "version_notes": "Go 1.20 added fallback roots. Go 1.27 honours `SSL_CERT_FILE` / `SSL_CERT_DIR` on Windows and macOS too, and then uses the Go verifier instead of the platform one (`GODEBUG=x509sslcertoverrideplatform=0` restores the old behaviour).",
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://go.dev/doc/go1.27",
+          "title": "Go 1.27 release notes",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://pkg.go.dev/crypto/x509",
+          "title": "Go crypto/x509",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://pkg.go.dev/golang.org/x/crypto/x509roots/fallback",
+          "title": "Go x509roots/fallback",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "rust-webpki-roots",
+      "name": "Rust (webpki-roots crate)",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Mozilla roots from the Common CA Database (CCADB) at crate release",
+      "location": "Compiled into the binary",
+      "update_mechanism": "`cargo update -p webpki-roots`, rebuild and redeploy",
+      "override": "Use `rustls-platform-verifier` (OS verifier) or `rustls-native-certs` instead",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Rebuild every binary with a current webpki-roots and redeploy it.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/rustls/webpki-roots/main/README.md",
+          "title": "webpki-roots README",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "rust-native-certs",
+      "name": "Rust (rustls-native-certs)",
+      "category": "language_runtime",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS store read at runtime",
+      "location": "Windows system store; macOS keychain trust settings; Linux / Unix bundle found by `openssl-probe`",
+      "update_mechanism": "OS update",
+      "override": "`SSL_CERT_FILE` (when set, used exclusively)",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store. Only root changes reach it: it loads roots into rustls, so OS intermediate block lists are not applied.",
+      "version_notes": null,
+      "notes": "The crate's README now recommends `rustls-platform-verifier`.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/rustls/rustls-native-certs/main/README.md",
+          "title": "rustls-native-certs README",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "rust-platform-verifier",
+      "name": "Rust (rustls-platform-verifier)",
+      "category": "language_runtime",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux",
+        "android",
+        "ios"
+      ],
+      "bundle_origin": "OS verifier",
+      "location": "Windows, macOS, iOS, Android: platform verifier; Linux: webpki with the system bundle",
+      "update_mechanism": "OS update",
+      "override": null,
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS; OS-delivered blocks apply where the platform verifier is used.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/rustls/rustls-platform-verifier/main/README.md",
+          "title": "rustls-platform-verifier README",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "dart",
+      "name": "Dart / Flutter",
+      "category": "language_runtime",
+      "trust_source": "fallback",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux",
+        "android",
+        "ios"
+      ],
+      "bundle_origin": "OS store; compiled-in roots as a last resort on Linux",
+      "location": "Linux: first existing of `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`, ...; Android: `/apex/com.android.conscrypt/cacerts`, else `/system/etc/security/cacerts`; Windows: ROOT and CA system stores; macOS / iOS: platform trust",
+      "update_mechanism": "OS update; SDK release for the compiled-in fallback",
+      "override": "`SecurityContext(withTrustedRoots: false)` with `setTrustedCertificates()`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store. On Linux hosts with no system bundle, update the Dart SDK or Flutter engine.",
+      "version_notes": null,
+      "notes": "The API page says Linux and Windows use Mozilla's list; the VM source reads the system stores first. This row follows the source.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://api.dart.dev/stable/latest/dart-io/SecurityContext/defaultContext.html",
+          "title": "Dart API: SecurityContext.defaultContext",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/dart-lang/sdk/main/runtime/bin/security_context_linux.cc",
+          "title": "Dart VM source: security_context_linux.cc",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/dart-lang/sdk/main/runtime/bin/security_context_win.cc",
+          "title": "Dart VM source: security_context_win.cc",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "deno",
+      "name": "Deno",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Mozilla roots via webpki-roots",
+      "location": "Compiled into the `deno` binary",
+      "update_mechanism": "Deno release",
+      "override": "`DENO_TLS_CA_STORE=system` (or `mozilla,system`); `--cert` / `DENO_CERT`; `NODE_EXTRA_CA_CERTS` (Deno 2.8+)",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Upgrade Deno, or set `DENO_TLS_CA_STORE=system` so OS fixes apply.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://docs.deno.com/runtime/reference/env_variables/",
+          "title": "Deno docs: environment variables",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "bun",
+      "name": "Bun",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Bundled root certificates",
+      "location": "Compiled into the `bun` binary",
+      "update_mechanism": "Bun release",
+      "override": "`--use-system-ca` or `NODE_USE_SYSTEM_CA=1` adds the OS store; `SSL_CERT_FILE` / `SSL_CERT_DIR` add certificates; `--use-openssl-ca` uses only the OpenSSL paths",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Upgrade Bun, or run with `--use-system-ca`.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://bun.sh/docs/runtime/env",
+          "title": "Bun docs: environment variables",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "ruby",
+      "name": "Ruby (openssl extension)",
+      "category": "language_runtime",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS store",
+      "location": "OpenSSL default paths (`OpenSSL::X509::DEFAULT_CERT_FILE`, `DEFAULT_CERT_DIR`)",
+      "update_mechanism": "OS update",
+      "override": "`SSL_CERT_FILE`, `SSL_CERT_DIR`; RubyGems `:ssl_ca_cert`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS trust store (on macOS, see the `/etc/ssl/cert.pem` notice).",
+      "version_notes": null,
+      "notes": "RubyGems adds one shipped root for rubygems.org (`lib/rubygems/ssl_certs`) on top of the OpenSSL defaults.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/ruby/openssl/master/lib/openssl/ssl.rb",
+          "title": "ruby/openssl source: ssl.rb",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/rubygems/rubygems/master/lib/rubygems/request.rb",
+          "title": "RubyGems source: request.rb",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "php",
+      "name": "PHP",
+      "category": "language_runtime",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS store",
+      "location": "Unix: OpenSSL default paths; Windows: Windows certificate verification callback (stream TLS)",
+      "update_mechanism": "OS update",
+      "override": "`openssl.cafile` / `openssl.capath` and `curl.cainfo` in `php.ini`; `cafile` stream context option",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store; check `php.ini` for a stale `openssl.cafile` or `curl.cainfo` bundle.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "The Windows stream-TLS behaviour comes from php-src source only, and the ext/curl default on Windows when neither ini value is set is undocumented.",
+      "sources": [
+        {
+          "url": "https://www.php.net/manual/en/openssl.configuration.php",
+          "title": "PHP manual: OpenSSL runtime configuration",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://www.php.net/manual/en/curl.configuration.php",
+          "title": "PHP manual: cURL runtime configuration",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/php/php-src/master/ext/openssl/xp_ssl.c",
+          "title": "php-src: ext/openssl/xp_ssl.c",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "dotnet",
+      "name": ".NET / C#",
+      "category": "language_runtime",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS store",
+      "location": "Windows / macOS: platform verifier; Linux: OpenSSL default paths, falling back to `/etc/ssl/certs`",
+      "update_mechanism": "OS update",
+      "override": "`SSL_CERT_FILE`, `SSL_CERT_DIR` (Linux); `X509ChainPolicy.CustomTrustStore` with `TrustMode = CustomRootTrust` (.NET 5+)",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS trust store.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://learn.microsoft.com/en-us/dotnet/standard/security/cross-platform-cryptography",
+          "title": "Microsoft Learn: cross-platform cryptography in .NET",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.x509certificates.x509chainpolicy.customtruststore",
+          "title": "X509ChainPolicy.CustomTrustStore",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "perl",
+      "name": "Perl (IO::Socket::SSL)",
+      "category": "language_runtime",
+      "trust_source": "fallback",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS store; `Mozilla::CA` only when no usable system default is found",
+      "location": "OpenSSL default paths; `Mozilla/CA/cacert.pem` (CPAN) as fallback",
+      "update_mechanism": "OS update (primary); `cpan Mozilla::CA` (fallback)",
+      "override": "`SSL_CERT_FILE`, `SSL_CERT_DIR`; `SSL_ca_file` / `SSL_ca_path` per connection",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store; also update `Mozilla::CA` on hosts that fall back to it.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/noxxi/p5-io-socket-ssl/master/lib/IO/Socket/SSL.pod",
+          "title": "IO::Socket::SSL documentation",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "erlang",
+      "name": "Erlang/OTP",
+      "category": "language_runtime",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS store when the application asks for it",
+      "location": "Loaded by `public_key:cacerts_get()` (OTP 25+)",
+      "update_mechanism": "OS update",
+      "override": "`cacerts` or `cacertfile` options to `ssl:connect`; `public_key` application setting `cacerts_path`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store. Applications that pass the hex `certifi` package's file instead carry a bundled Mozilla copy and need a dependency update.",
+      "version_notes": "`public_key:cacerts_get/0`: OTP 25.0. `verify_peer` default: OTP 26.0.",
+      "notes": "OTP loads no roots by itself: `ssl` needs `{cacerts, public_key:cacerts_get()}` or `cacertfile`. The `certifi` package is a hex / rebar3 dependency, not part of OTP.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://www.erlang.org/doc/apps/public_key/public_key.html",
+          "title": "Erlang public_key documentation",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://www.erlang.org/doc/apps/ssl/ssl.html",
+          "title": "Erlang ssl documentation",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://hex.pm/packages/certifi",
+          "title": "hex.pm: certifi package",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "swift",
+      "name": "Swift",
+      "category": "language_runtime",
+      "trust_source": "os",
+      "platforms": [
+        "macos",
+        "ios",
+        "linux"
+      ],
+      "bundle_origin": "OS store",
+      "location": "Apple: Security.framework (`SecTrust`); Linux: system PEM bundle (swift-nio-ssl with BoringSSL; Foundation via libcurl)",
+      "update_mechanism": "OS update",
+      "override": "swift-nio-ssl `trustRoots: .file(...)`; Foundation on Linux: `URLSessionCertificateAuthorityInfoFile`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS trust store.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/apple/swift-nio-ssl/main/Sources/NIOSSL/Docs.docc/trust-roots-behavior.md",
+          "title": "swift-nio-ssl: trust roots behaviour",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/swiftlang/swift-corelibs-foundation/main/Sources/FoundationNetworking/URLSession/libcurl/EasyHandle.swift",
+          "title": "swift-corelibs-foundation: EasyHandle.swift",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "curl-macos",
+      "name": "curl (macOS system)",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "platforms": [
+        "macos"
+      ],
+      "bundle_origin": "OS-supplied PEM file",
+      "location": "`/etc/ssl/cert.pem` (compiled-in `CURL_CA_BUNDLE`, LibreSSL)",
+      "update_mechanism": "macOS update",
+      "override": "`--cacert`, `CURL_CA_BUNDLE`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Apple's configuration-data block does not cover this file. Until a macOS update fixes it, follow Apple's optional steps to remove emSign ECC Root CA - G3 and AAA Certificate Services from `/etc/ssl/cert.pem`, or pass `--cacert` with a clean bundle.",
+      "version_notes": "Upstream curl removed Secure Transport in 8.15.0; `--ca-native` (use the OS store with OpenSSL-family backends) arrived in 8.2.0.",
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/apple-oss-distributions/curl/main/config_mac/curl_config.h",
+          "title": "Apple curl build configuration",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://support.apple.com/en-us/149555",
+          "title": "Apple support 149555: eMudhra certificate blocking",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "curl-windows",
+      "name": "curl (Windows system)",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "platforms": [
+        "windows"
+      ],
+      "bundle_origin": "Windows trust store",
+      "location": "Schannel (`C:\\Windows\\System32\\curl.exe`)",
+      "update_mechanism": "Windows Update",
+      "override": "`--cacert` with a file-based backend only; `--ca-native` has no effect with Schannel",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Nothing beyond Windows Update.",
+      "version_notes": "Upstream curl removed Secure Transport in 8.15.0; `--ca-native` (use the OS store with OpenSSL-family backends) arrived in 8.2.0.",
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://curl.se/windows/microsoft.html",
+          "title": "curl: the curl shipped by Microsoft",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://curl.se/docs/manpage.html",
+          "title": "curl man page",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "curl-linux",
+      "name": "curl (Linux distributions)",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "OS store",
+      "location": "Debian / Ubuntu: `/etc/ssl/certs/ca-certificates.crt`; Fedora / RHEL: `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`",
+      "update_mechanism": "OS `ca-certificates` update",
+      "override": "`--cacert`, `--capath`, `CURL_CA_BUNDLE`, `SSL_CERT_FILE`, `SSL_CERT_DIR`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS `ca-certificates` package.",
+      "version_notes": "Upstream curl removed Secure Transport in 8.15.0; `--ca-native` (use the OS store with OpenSSL-family backends) arrived in 8.2.0.",
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://sources.debian.org/data/main/c/curl/8.22.0-1/debian/rules",
+          "title": "Debian curl 8.22.0 build rules",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://src.fedoraproject.org/rpms/curl/raw/rawhide/f/curl.spec",
+          "title": "Fedora curl.spec",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://curl.se/docs/sslcerts.html",
+          "title": "curl: SSL certificate verification",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "curl-homebrew",
+      "name": "curl (Homebrew)",
+      "category": "cli_tool",
+      "trust_source": "hybrid",
+      "platforms": [
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Homebrew OpenSSL default bundle (macOS: also Apple SecTrust)",
+      "location": "`$(brew --prefix)/etc/ca-certificates/cert.pem` via OpenSSL's default `cert.pem`",
+      "update_mechanism": "`brew upgrade curl ca-certificates`",
+      "override": "`--cacert`, `CURL_CA_BUNDLE`, `SSL_CERT_FILE`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Run `brew upgrade ca-certificates curl`.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "The formula builds with `--with-ca-fallback` and, on macOS, `--with-apple-sectrust`; the effective default is inferred from those flags and not documented in one place.",
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/Homebrew/homebrew-core/main/Formula/c/curl.rb",
+          "title": "Homebrew formula: curl",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/Homebrew/homebrew-core/main/Formula/c/ca-certificates.rb",
+          "title": "Homebrew formula: ca-certificates",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "openssl-homebrew",
+      "name": "OpenSSL (Homebrew openssl@3 / openssl@4)",
+      "category": "cli_tool",
+      "trust_source": "hybrid",
+      "platforms": [
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Merged bundle: macOS System and SystemRootCertificates keychains (Linux: the first system bundle found) plus the Mozilla list",
+      "location": "`$(brew --prefix)/etc/openssl@3/cert.pem` links to `$(brew --prefix)/etc/ca-certificates/cert.pem`; the Mozilla-only copy is `$(brew --prefix)/share/ca-certificates/cacert.pem`",
+      "update_mechanism": "`brew upgrade ca-certificates` (post-install regenerates the merged file)",
+      "override": "`SSL_CERT_FILE`, `SSL_CERT_DIR`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Run `brew upgrade ca-certificates`, then scan the merged `cert.pem`: it re-imports macOS keychain roots, and the macOS keychain still holds AAA Certificate Services.",
+      "version_notes": null,
+      "notes": "The formula's Mozilla copy (curl.se `cacert-2026-10-20`) excludes AAA Certificate Services and the emSign G3 roots by public-key hash.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/Homebrew/homebrew-core/main/Formula/c/ca-certificates.rb",
+          "title": "Homebrew formula: ca-certificates",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/Homebrew/homebrew-core/main/Formula/o/openssl@3.rb",
+          "title": "Homebrew formula: openssl@3",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "homebrew",
+      "name": "Homebrew (`brew` itself)",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "platforms": [
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "System curl and Homebrew's Portable Ruby",
+      "location": null,
+      "update_mechanism": "`brew update`",
+      "override": "`HOMEBREW_FORCE_BREWED_CURL`, `HOMEBREW_FORCE_VENDOR_RUBY`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "On macOS, downloads go through system curl and `/etc/ssl/cert.pem`; see the macOS command-line notice.",
+      "version_notes": null,
+      "notes": "Homebrew uses Portable Ruby unless the system Ruby is new enough, and uses brewed curl only when no suitable system curl exists (`HOMEBREW_FORCE_BREWED_CURL` is then set automatically).",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://docs.brew.sh/Manpage",
+          "title": "Homebrew manual page",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "wget",
+      "name": "wget (GNU)",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "bundle_origin": "OS store",
+      "location": "Paths chosen when OpenSSL was installed",
+      "update_mechanism": "OS update",
+      "override": "`--ca-certificate`, `--ca-directory`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://www.gnu.org/software/wget/manual/wget.html",
+          "title": "GNU wget manual",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "git",
+      "name": "git",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS store through libcurl",
+      "location": "Linux: libcurl's compiled-in bundle; macOS: `/etc/ssl/cert.pem`; Git for Windows: Windows store (Schannel, installer default) or `mingw64/etc/ssl/certs/ca-bundle.crt` (OpenSSL option)",
+      "update_mechanism": "OS update; Git for Windows release for the OpenSSL bundle",
+      "override": "`http.sslCAInfo` / `GIT_SSL_CAINFO`, `http.sslCAPath`, `http.sslBackend`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store. On macOS see the `/etc/ssl/cert.pem` notice; Git for Windows with the OpenSSL backend needs a Git for Windows update.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://git-scm.com/docs/git-config",
+          "title": "git-config documentation",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/git-for-windows/build-extra/main/installer/install.iss",
+          "title": "Git for Windows installer script",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://support.apple.com/en-us/149555",
+          "title": "Apple support 149555: eMudhra certificate blocking",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "pip",
+      "name": "pip",
+      "category": "cli_tool",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS store via the vendored truststore, plus vendored certifi",
+      "location": "`pip/_vendor/certifi/cacert.pem` and the OS store",
+      "update_mechanism": "pip upgrade (certifi copy); OS update",
+      "override": "`--cert`, `PIP_CERT`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`; opt out of the OS store with `--use-deprecated=legacy-certs`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Upgrade pip (the vendored certifi copy is still trusted alongside the OS store) and update the OS store.",
+      "version_notes": "pip 24.2+ on Python 3.10+ uses the OS store in addition to certifi by default. pip 22.2 to 24.1 needed `--use-feature=truststore`.",
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://pip.pypa.io/en/stable/topics/https-certificates/",
+          "title": "pip: HTTPS certificates",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/pypa/pip/main/NEWS.rst",
+          "title": "pip changelog",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "npm-yarn",
+      "name": "npm / yarn",
+      "category": "cli_tool",
+      "trust_source": "bundled",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Node.js bundled Mozilla roots",
+      "location": "Compiled into the `node` binary",
+      "update_mechanism": "Node.js update",
+      "override": "npm: `cafile` / `ca` in `.npmrc`; yarn (Berry): `httpsCaFilePath`; `NODE_EXTRA_CA_CERTS`; `NODE_USE_SYSTEM_CA=1` (Node.js v24.6.0, v22.19.0)",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Upgrade Node.js, or set `NODE_USE_SYSTEM_CA=1` for npm and yarn.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://docs.npmjs.com/cli/v11/using-npm/config",
+          "title": "npm config",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://yarnpkg.com/configuration/yarnrc",
+          "title": "yarn: .yarnrc.yml settings",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "cargo",
+      "name": "cargo",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS store through libcurl",
+      "location": "System certificates",
+      "update_mechanism": "OS update",
+      "override": "`http.cainfo` / `CARGO_HTTP_CAINFO`; `http.proxy-cainfo`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store.",
+      "version_notes": null,
+      "notes": "Cargo's HTTP client is libcurl; the docs say it uses the system certificates when `http.cainfo` is not set.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://doc.rust-lang.org/cargo/reference/config.html",
+          "title": "Cargo configuration reference",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "rustup",
+      "name": "rustup",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS verifier (`rustls-platform-verifier`)",
+      "location": null,
+      "update_mechanism": "OS update",
+      "override": null,
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store.",
+      "version_notes": null,
+      "notes": "Default download backend is reqwest with rustls and `rustls-platform-verifier`; the curl backend is deprecated since rustup 1.28.2.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/rust-lang/rustup/master/CHANGELOG.md",
+          "title": "rustup changelog",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "docker-cli",
+      "name": "docker CLI and Engine",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS store (Go)",
+      "location": "Linux: Go's bundle search; registry CAs under `/etc/docker/certs.d/` are merged with system roots",
+      "update_mechanism": "OS update",
+      "override": "`/etc/docker/certs.d/<registry>/ca.crt`; `SSL_CERT_FILE`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://docs.docker.com/engine/security/certificates/",
+          "title": "Docker: verify repository client with certificates",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "kubectl",
+      "name": "kubectl",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Cluster CA from kubeconfig; otherwise OS store (Go)",
+      "location": "`certificate-authority-data` in kubeconfig",
+      "update_mechanism": "OS update",
+      "override": "`--certificate-authority`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Usually nothing: clusters normally pin their own CA in kubeconfig.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://kubernetes.io/docs/reference/kubectl/kubectl/",
+          "title": "kubectl reference",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "terraform",
+      "name": "Terraform / OpenTofu",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "OS store (Go)",
+      "location": null,
+      "update_mechanism": "OS update",
+      "override": "`SSL_CERT_FILE`, `SSL_CERT_DIR` (Linux)",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "Neither HashiCorp nor OpenTofu documents the CA source; the row assumes Go's default system roots.",
+      "sources": [
+        {
+          "url": "https://pkg.go.dev/crypto/x509",
+          "title": "Go crypto/x509",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "aws-cli",
+      "name": "AWS CLI v2",
+      "category": "cli_tool",
+      "trust_source": "bundled",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Vendored botocore bundle (certifi if importable)",
+      "location": "Installer: `/usr/local/aws-cli/v2/current/dist/awscli/botocore/cacert.pem`; Amazon Linux 2023 RPM `awscli-2`: `/usr/lib/python3.9/site-packages/awscli/botocore/cacert.pem`",
+      "update_mechanism": "AWS CLI update",
+      "override": "`AWS_CA_BUNDLE`, `ca_bundle` in the config file, `--ca-bundle`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Upgrade to 2.38.4 or later. Where a distribution package lags (Amazon Linux 2023 `awscli-2-2.33.15` still contains AAA), set `AWS_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt`.",
+      "version_notes": "2.38.4 removed AAA Certificate Services from the vendored bundle (eMudhra cross-sign). 2.39.3 is the current release.",
+      "notes": "The Amazon Linux 2023 path and its AAA Certificate Services entry were observed on an `awscli-2-2.33.15-1.amzn2023.0.1` host (bundle dated 2026-02-06).",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/aws/aws-cli/v2/CHANGELOG.rst",
+          "title": "AWS CLI v2 changelog",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/aws/aws-cli/v2/awscli/botocore/httpsession.py",
+          "title": "botocore source: httpsession.py",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html",
+          "title": "AWS CLI environment variables",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "gcloud",
+      "name": "Google Cloud CLI (gcloud)",
+      "category": "cli_tool",
+      "trust_source": "bundled",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Vendored certifi",
+      "location": "`google-cloud-sdk/lib/third_party/certifi/cacert.pem` (also vendored httplib2 and botocore bundles)",
+      "update_mechanism": "`gcloud components update`",
+      "override": "`gcloud config set core/custom_ca_certs_file <file>` (environment form `CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE`)",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Run `gcloud components update`, or set `core/custom_ca_certs_file` to the OS bundle.",
+      "version_notes": null,
+      "notes": "Path checked in the official 591.0.0 Linux tarball.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://cloud.google.com/sdk/docs/properties",
+          "title": "gcloud CLI properties",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://cloud.google.com/sdk/gcloud/reference/config/set",
+          "title": "gcloud config set",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "azure-cli",
+      "name": "Azure CLI (az)",
+      "category": "cli_tool",
+      "trust_source": "bundled",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Bundled Python with certifi",
+      "location": "Windows: `C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\Lib\\site-packages\\certifi\\cacert.pem`; Debian / Ubuntu: `/opt/az/lib/python<version>/site-packages/certifi/cacert.pem`; RHEL / SUSE: `/usr/lib64/az/lib/python<version>/site-packages/certifi/cacert.pem`",
+      "update_mechanism": "Azure CLI update",
+      "override": "`REQUESTS_CA_BUNDLE`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Update the Azure CLI, or set `REQUESTS_CA_BUNDLE` to the OS bundle.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://learn.microsoft.com/en-us/cli/azure/use-azure-cli-successfully-troubleshooting",
+          "title": "Microsoft Learn: Azure CLI troubleshooting",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "apt",
+      "name": "apt",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "OS store",
+      "location": "OpenSSL default paths (`/etc/ssl/certs`)",
+      "update_mechanism": "OS update",
+      "override": "`Acquire::https::CAInfo`, `Acquire::https::CAPath`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update `ca-certificates`.",
+      "version_notes": "apt 2.9.19 replaced GnuTLS with OpenSSL (Debian 13 ships apt 3.0; Debian 12 ships 2.6 with GnuTLS).",
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/Debian/apt/main/methods/connect.cc",
+          "title": "apt source: methods/connect.cc",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/Debian/apt/main/debian/changelog",
+          "title": "apt changelog",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "dnf",
+      "name": "dnf / yum",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "OS store",
+      "location": "System default bundle (librepo / libcurl)",
+      "update_mechanism": "OS update",
+      "override": "`sslcacert` and `proxy_sslcacert` in repository configuration",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update `ca-certificates`.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://dnf.readthedocs.io/en/latest/conf_ref.html",
+          "title": "DNF configuration reference",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "nginx",
+      "name": "nginx (proxy to TLS upstreams)",
+      "category": "server",
+      "trust_source": "configured",
+      "platforms": [
+        "linux",
+        "freebsd",
+        "windows"
+      ],
+      "bundle_origin": null,
+      "location": "The file named in `proxy_ssl_trusted_certificate` (no default)",
+      "update_mechanism": "Whoever maintains that file; an OS update fixes it when it points at the OS bundle",
+      "override": "`proxy_ssl_verify on` plus `proxy_ssl_trusted_certificate`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Check that `proxy_ssl_verify` is on and that `proxy_ssl_trusted_certificate` points at an updated bundle.",
+      "version_notes": null,
+      "notes": "`proxy_ssl_verify` is off by default, so upstream certificates are not checked at all unless enabled.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://nginx.org/en/docs/http/ngx_http_proxy_module.html",
+          "title": "nginx: ngx_http_proxy_module",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "apache-httpd",
+      "name": "Apache httpd (mod_ssl proxy)",
+      "category": "server",
+      "trust_source": "configured",
+      "platforms": [
+        "linux",
+        "freebsd",
+        "windows"
+      ],
+      "bundle_origin": null,
+      "location": "`SSLProxyCACertificateFile` / `SSLProxyCACertificatePath` (no default)",
+      "update_mechanism": "Whoever maintains that file",
+      "override": "`SSLProxyVerify require` with `SSLProxyCACertificateFile`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Check that `SSLProxyVerify` is `require` and the proxy CA file is current.",
+      "version_notes": null,
+      "notes": "`SSLProxyVerify` defaults to `none`. `SSLCACertificateFile` is for authenticating clients, not upstreams.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://httpd.apache.org/docs/2.4/mod/mod_ssl.html",
+          "title": "Apache httpd: mod_ssl",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "haproxy",
+      "name": "HAProxy",
+      "category": "server",
+      "trust_source": "configured",
+      "platforms": [
+        "linux",
+        "freebsd"
+      ],
+      "bundle_origin": null,
+      "location": "`ca-file` on each `server` line; `@system-ca` selects the OS store",
+      "update_mechanism": "Whoever maintains the file; OS update when `@system-ca` is used",
+      "override": "`ca-file`, `ca-base`, `@system-ca`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Use `ca-file @system-ca` and update the OS store, or refresh the configured CA file.",
+      "version_notes": "`@system-ca` is first documented in the HAProxy 2.6 manual.",
+      "notes": "Server certificate verification is required by default (`ssl-server-verify`). The built-in HTTP client defaults to `@system-ca`.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://docs.haproxy.org/3.0/configuration.html",
+          "title": "HAProxy 3.0 configuration manual",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://docs.haproxy.org/2.6/configuration.html",
+          "title": "HAProxy 2.6 configuration manual",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "envoy",
+      "name": "Envoy",
+      "category": "server",
+      "trust_source": "configured",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": null,
+      "location": "`trusted_ca` in `CertificateValidationContext`",
+      "update_mechanism": "Whoever maintains the file",
+      "override": "`trusted_ca` (often pointed at the OS bundle, for example `/etc/ssl/certs/ca-certificates.crt`)",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Make sure every upstream cluster sets `trusted_ca`, and refresh the file it names.",
+      "version_notes": null,
+      "notes": "Without `trusted_ca`, a presented peer certificate is not verified.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/transport_sockets/tls/v3/common.proto",
+          "title": "Envoy TLS common API",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/security/ssl",
+          "title": "Envoy TLS overview",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "caddy",
+      "name": "Caddy (reverse proxy)",
+      "category": "server",
+      "trust_source": "os",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "freebsd"
+      ],
+      "bundle_origin": "OS store (Go system pool)",
+      "location": null,
+      "update_mechanism": "OS update",
+      "override": "`tls_trust_pool` inside `transport http`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store, or the file named by `tls_trust_pool file`.",
+      "version_notes": null,
+      "notes": "The system-pool default comes from Caddy's source (no CA configured leaves Go's `RootCAs` unset).",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://caddyserver.com/docs/caddyfile/directives/reverse_proxy",
+          "title": "Caddy: reverse_proxy directive",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/caddyserver/caddy/master/modules/caddyhttp/reverseproxy/httptransport.go",
+          "title": "Caddy source: httptransport.go",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "traefik",
+      "name": "Traefik",
+      "category": "server",
+      "trust_source": "os",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos"
+      ],
+      "bundle_origin": "OS store (Go system pool)",
+      "location": null,
+      "update_mechanism": "OS update",
+      "override": "`serversTransport.rootCAs`",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store, or the files listed in `rootCAs`.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "Traefik's documentation gives `rootCAs` a default of `[]` but does not say that an empty list means the system pool; that follows from Go's TLS client.",
+      "sources": [
+        {
+          "url": "https://doc.traefik.io/traefik/reference/routing-configuration/http/load-balancing/serverstransport/",
+          "title": "Traefik: ServersTransport",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "postgresql",
+      "name": "PostgreSQL (libpq clients)",
+      "category": "server",
+      "trust_source": "configured",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": null,
+      "location": "`sslrootcert` (default `~/.postgresql/root.crt`); `sslrootcert=system` uses the OS store",
+      "update_mechanism": "Whoever maintains `root.crt`; OS update with `sslrootcert=system`",
+      "override": "`sslrootcert`, `sslmode`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Use `sslmode=verify-full`; refresh `root.crt` or switch to `sslrootcert=system`.",
+      "version_notes": "`sslrootcert=system`: PostgreSQL 16+ (implies `sslmode=verify-full`).",
+      "notes": "The default `sslmode=prefer` does not verify the server. `ssl_ca_file` is a server setting for client certificates.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://www.postgresql.org/docs/current/libpq-ssl.html",
+          "title": "PostgreSQL: libpq SSL support",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://www.postgresql.org/docs/current/libpq-connect.html",
+          "title": "PostgreSQL: libpq connection parameters",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "mysql-mariadb",
+      "name": "MySQL / MariaDB clients",
+      "category": "server",
+      "trust_source": "configured",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": null,
+      "location": "`--ssl-ca` / `--ssl-capath`",
+      "update_mechanism": "Whoever maintains the CA file",
+      "override": "`--ssl-ca`, `--ssl-capath`, `--ssl-mode`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Set `--ssl-ca` to an updated bundle and use `VERIFY_IDENTITY`.",
+      "version_notes": null,
+      "notes": "MySQL 8.4 clients do not authenticate the server without `--ssl-ca` / `--ssl-capath` (default mode `PREFERRED`). MariaDB Connector/C 3.4 verifies server certificates by default.",
+      "verified": false,
+      "unverified_note": "Which CA source MariaDB Connector/C 3.4 uses when none is configured is not documented on the pages checked.",
+      "sources": [
+        {
+          "url": "https://dev.mysql.com/doc/refman/8.4/en/connection-options.html",
+          "title": "MySQL 8.4: connection options",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://mariadb.com/kb/en/securing-connections-for-client-and-server/",
+          "title": "MariaDB: securing connections",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "vscode",
+      "name": "VS Code",
+      "category": "desktop",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Chromium verifier for the workbench; OS certificates added to the extension host",
+      "location": "Bundled in the Electron app",
+      "update_mechanism": "App auto-update",
+      "override": "`http.systemCertificates` (default `true`); `NODE_EXTRA_CA_CERTS`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Update VS Code and the OS store; leave `http.systemCertificates` on.",
+      "version_notes": null,
+      "notes": "The `http.systemCertificates` setting and its default appear in VS Code's source; the network page says the Chromium stack uses the OS trust infrastructure.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/microsoft/vscode/main/src/vs/platform/request/common/request.ts",
+          "title": "VS Code source: request.ts",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://code.visualstudio.com/docs/setup/network",
+          "title": "VS Code: network connections",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "electron",
+      "name": "Electron apps (general)",
+      "category": "desktop",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Chromium verifier for `net` and web content; Node.js bundled roots for Node `https` in the main process",
+      "location": "Compiled into the app's Electron and Node.js binaries",
+      "update_mechanism": "App update (new Electron version)",
+      "override": "`NODE_EXTRA_CA_CERTS`; `session.setCertificateVerifyProc`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Update the app; ask the vendor which Electron version it ships.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "Electron's docs say `net` uses Chromium's network stack, but do not state which root store its Chromium build uses or that main-process Node `https` keeps Node's bundled roots.",
+      "sources": [
+        {
+          "url": "https://www.electronjs.org/docs/latest/api/net",
+          "title": "Electron: net module",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://www.electronjs.org/docs/latest/api/session",
+          "title": "Electron: session",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://nodejs.org/api/tls.html",
+          "title": "Node.js: tls.rootCertificates",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "slack",
+      "name": "Slack desktop",
+      "category": "desktop",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Electron (Chromium and Node.js)",
+      "location": "Bundled in the app",
+      "update_mechanism": "App auto-update",
+      "override": "`NODE_EXTRA_CA_CERTS`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Keep Slack updated.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "Slack publishes no statement on certificate trust; the row assumes stock Electron behaviour.",
+      "sources": [
+        {
+          "url": "https://slack.com/help/articles/360001603387-Manage-Slack-connection-issues",
+          "title": "Slack: manage connection issues",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "discord",
+      "name": "Discord desktop",
+      "category": "desktop",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Electron (Chromium and Node.js)",
+      "location": "Bundled in the app",
+      "update_mechanism": "App auto-update",
+      "override": null,
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Keep Discord updated.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "Discord publishes no statement on certificate trust; the row assumes stock Electron behaviour.",
+      "sources": [
+        {
+          "url": "https://www.electronjs.org/docs/latest/api/net",
+          "title": "Electron: net module",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "teams",
+      "name": "Microsoft Teams (new)",
+      "category": "desktop",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "bundle_origin": "WebView2 (Microsoft Edge engine)",
+      "location": "WebView2 runtime",
+      "update_mechanism": "WebView2 runtime and app updates",
+      "override": null,
+      "revocation_channel": [
+        "CRLSet"
+      ],
+      "remediation": "Keep the WebView2 runtime updated: Microsoft says its CRLSet update covers Edge and WebView2.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "Microsoft documents that Teams requires WebView2 but not that WebView2 uses Edge's built-in verifier and trust list.",
+      "sources": [
+        {
+          "url": "https://learn.microsoft.com/en-us/microsoftteams/teams-client-system-requirements",
+          "title": "Microsoft Teams client requirements",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://learn.microsoft.com/en-us/microsoft-edge/webview2/",
+          "title": "Microsoft Edge WebView2",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-security-cert-verification",
+          "title": "Microsoft Edge certificate verification",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "thunderbird",
+      "name": "Thunderbird",
+      "category": "desktop",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "bundle_origin": "Mozilla root store (NSS)",
+      "location": "`libnssckbi` in the install directory",
+      "update_mechanism": "Thunderbird release",
+      "override": "`security.enterprise_roots.enabled` (Gecko default `true`, Windows and macOS)",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Update Thunderbird.",
+      "version_notes": null,
+      "notes": "Thunderbird's profile does not override the Gecko enterprise-roots, CRLite or intermediate-preloading defaults.",
+      "verified": false,
+      "unverified_note": "Whether Thunderbird applies OneCRL updates between releases is not documented.",
+      "sources": [
+        {
+          "url": "https://hg.mozilla.org/comm-central/raw-file/tip/mail/app/profile/all-thunderbird.js",
+          "title": "comm-central: all-thunderbird.js",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://hg.mozilla.org/mozilla-central/raw-file/tip/modules/libpref/init/StaticPrefList.yaml",
+          "title": "mozilla-central StaticPrefList.yaml",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "outlook-classic",
+      "name": "Outlook (classic, Windows)",
+      "category": "desktop",
+      "trust_source": "os",
+      "platforms": [
+        "windows"
+      ],
+      "bundle_origin": "Windows trust store",
+      "location": null,
+      "update_mechanism": "Windows Update",
+      "override": null,
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Nothing beyond Windows Update.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://learn.microsoft.com/en-us/troubleshoot/outlook/connectivity/error-when-outlook-uses-rpc-https-connect-server",
+          "title": "Microsoft Learn: Outlook RPC over HTTPS certificate error",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "outlook-new",
+      "name": "Outlook (new, Windows)",
+      "category": "desktop",
+      "trust_source": "hybrid",
+      "platforms": [
+        "windows"
+      ],
+      "bundle_origin": "WebView2 (Microsoft Edge engine)",
+      "location": "WebView2 runtime",
+      "update_mechanism": "WebView2 runtime and app updates",
+      "override": null,
+      "revocation_channel": [
+        "CRLSet"
+      ],
+      "remediation": "Keep the WebView2 runtime updated.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "Microsoft documents that new Outlook uses WebView2 but not which verifier WebView2 applies.",
+      "sources": [
+        {
+          "url": "https://learn.microsoft.com/en-us/microsoft-365-apps/outlook/overview-new-outlook-windows",
+          "title": "Microsoft Learn: new Outlook for Windows",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "zoom",
+      "name": "Zoom desktop",
+      "category": "desktop",
+      "trust_source": "os",
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "bundle_origin": "OS trust store",
+      "location": null,
+      "update_mechanism": "OS update",
+      "override": "Add intercepting-proxy roots to the OS trusted root store",
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Update the OS store.",
+      "version_notes": null,
+      "notes": "Zoom's support article tells users to fix untrusted-issuer errors in the system trusted root store. Linux behaviour is not documented.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0067461",
+          "title": "Zoom support: certificate errors behind a proxy",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "macos",
+      "name": "macOS",
+      "category": "operating_system",
+      "trust_source": "os",
+      "platforms": [
+        "macos"
+      ],
+      "bundle_origin": "Apple Root Certificate Program",
+      "location": "Trust anchors and `TrustStore.html` in `/System/Library/Security/Certificates.bundle`; `/etc/ssl/cert.pem` for LibreSSL command-line tools",
+      "update_mechanism": "Trust-store assets fetched by `trustd` (checked every 12 hours) and OS updates",
+      "override": null,
+      "revocation_channel": [
+        "Apple configuration data"
+      ],
+      "remediation": "Nothing for apps using Apple's frameworks. Command-line tools reading `/etc/ssl/cert.pem` need the steps in the macOS notice.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://support.apple.com/en-us/126047",
+          "title": "Apple: trust store for the 26 OS releases",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/apple-oss-distributions/Security/main/trust/trustd/OTATrustUtilities.m",
+          "title": "Apple Security source: OTATrustUtilities.m",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://support.apple.com/en-us/149555",
+          "title": "Apple support 149555: eMudhra certificate blocking",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "ios",
+      "name": "iOS / iPadOS",
+      "category": "operating_system",
+      "trust_source": "os",
+      "platforms": [
+        "ios"
+      ],
+      "bundle_origin": "Apple Root Certificate Program",
+      "location": "Built into the OS",
+      "update_mechanism": "Apple configuration data and OS updates",
+      "override": null,
+      "revocation_channel": [
+        "Apple configuration data"
+      ],
+      "remediation": "Nothing to do.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://support.apple.com/en-us/149555",
+          "title": "Apple support 149555: eMudhra certificate blocking",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://support.apple.com/en-us/103272",
+          "title": "Apple: available trusted root certificates",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "windows",
+      "name": "Windows",
+      "category": "operating_system",
+      "trust_source": "os",
+      "platforms": [
+        "windows"
+      ],
+      "bundle_origin": "Microsoft Trusted Root Program",
+      "location": "System certificate stores; `authrootstl.cab` (trusted roots) and `disallowedcertstl.cab` (untrusted certificates) from `ctldl.windowsupdate.com`",
+      "update_mechanism": "Certificate trust lists (CTLs) downloaded daily by connected machines, plus Windows Update",
+      "override": null,
+      "revocation_channel": [
+        "Windows disallowed CTL"
+      ],
+      "remediation": "Nothing on connected machines. Disconnected machines need the CTL files deployed by an administrator.",
+      "version_notes": null,
+      "notes": "Microsoft updated the disallowed CTL on 2026-10-20 and shipped an out-of-band Windows update on 2026-10-26 that removes 7 certificates from the Windows trust list.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://learn.microsoft.com/en-us/windows-server/identity/ad-cs/configure-trusted-roots-disallowed-certificates",
+          "title": "Microsoft Learn: configure trusted roots and disallowed certificates",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://www.microsoft.com/en-us/msrc/blog/2026/10/microsoft-response-to-compromised-emudhra-certificate-authority-keys",
+          "title": "MSRC: Microsoft response to compromised eMudhra CA keys",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "debian-ubuntu",
+      "name": "Debian / Ubuntu",
+      "category": "operating_system",
+      "trust_source": "os",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "Mozilla root store",
+      "location": "`/etc/ssl/certs/ca-certificates.crt` and `/etc/ssl/certs/`",
+      "update_mechanism": "`apt update && apt install --only-upgrade ca-certificates`",
+      "override": "Local CAs in `/usr/local/share/ca-certificates`, then `update-ca-certificates`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Upgrade `ca-certificates`; rebuild images derived from older bases.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://manpages.debian.org/bookworm/ca-certificates/update-ca-certificates.8.en.html",
+          "title": "Debian: update-ca-certificates(8)",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "rhel-fedora",
+      "name": "RHEL / Fedora / CentOS Stream",
+      "category": "operating_system",
+      "trust_source": "os",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "Mozilla root store",
+      "location": "`/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem` (linked from `/etc/ssl/cert.pem` and `/etc/pki/tls/certs/ca-bundle.crt`)",
+      "update_mechanism": "`dnf upgrade ca-certificates` (runs `update-ca-trust`)",
+      "override": "Anchors and blocklist in `/etc/pki/ca-trust/source/`, then `update-ca-trust`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Upgrade `ca-certificates`, or add the certificates to `/etc/pki/ca-trust/source/blocklist/` and run `update-ca-trust`.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://src.fedoraproject.org/rpms/ca-certificates/raw/rawhide/f/ca-certificates.spec",
+          "title": "Fedora ca-certificates.spec",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://src.fedoraproject.org/rpms/ca-certificates/raw/rawhide/f/update-ca-trust.8.txt",
+          "title": "Fedora update-ca-trust(8)",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "amazon-linux",
+      "name": "Amazon Linux 2023",
+      "category": "operating_system",
+      "trust_source": "os",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "Mozilla root store (Fedora-style `ca-trust`)",
+      "location": "`/etc/pki/tls/certs/ca-bundle.crt` and `/etc/ssl/cert.pem`, both links to `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`",
+      "update_mechanism": "`dnf upgrade ca-certificates`",
+      "override": "Same `ca-trust` layout as RHEL",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Upgrade `ca-certificates`; also check bundled copies such as the `awscli-2` RPM.",
+      "version_notes": null,
+      "notes": "Layout observed on an Amazon Linux 2023.11 host (`ca-certificates-2025.2.76`), whose bundle contains no AAA Certificate Services.",
+      "verified": false,
+      "unverified_note": "No Amazon documentation of the bundle paths was found; the paths come from a live host.",
+      "sources": [
+        {
+          "url": "https://src.fedoraproject.org/rpms/ca-certificates/raw/rawhide/f/ca-certificates.spec",
+          "title": "Fedora ca-certificates.spec",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "alpine",
+      "name": "Alpine Linux",
+      "category": "operating_system",
+      "trust_source": "os",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "Mozilla root store",
+      "location": "`/etc/ssl/certs/ca-certificates.crt` (`/etc/ssl/cert.pem` links to it)",
+      "update_mechanism": "`apk upgrade ca-certificates`",
+      "override": "`/usr/local/share/ca-certificates`, then `update-ca-certificates`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Upgrade `ca-certificates` and rebuild Alpine-based images.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/alpinelinux/aports/master/main/ca-certificates/APKBUILD",
+          "title": "Alpine aports (GitHub mirror): ca-certificates APKBUILD",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "arch",
+      "name": "Arch Linux",
+      "category": "operating_system",
+      "trust_source": "os",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "Mozilla root store",
+      "location": "`/etc/ca-certificates/extracted/tls-ca-bundle.pem` (linked from `/etc/ssl/cert.pem`)",
+      "update_mechanism": "`pacman -Syu`",
+      "override": "`/etc/ca-certificates/trust-source/`, then `update-ca-trust`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Run `pacman -Syu`.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://archlinux.org/packages/core/any/ca-certificates-utils/files/",
+          "title": "Arch: ca-certificates-utils files",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://wiki.archlinux.org/title/Transport_Layer_Security",
+          "title": "ArchWiki: Transport Layer Security",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "suse",
+      "name": "SUSE / openSUSE",
+      "category": "operating_system",
+      "trust_source": "os",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "Mozilla root store",
+      "location": "`/var/lib/ca-certificates/ca-bundle.pem` (`/etc/ssl/ca-bundle.pem` is a link to it)",
+      "update_mechanism": "`zypper update ca-certificates-mozilla`",
+      "override": "Anchors in `/etc/pki/trust/anchors`, then `update-ca-certificates`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Update the CA packages.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/openSUSE/ca-certificates/master/certbundle.run",
+          "title": "openSUSE ca-certificates: certbundle.run",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/openSUSE/ca-certificates/master/update-ca-certificates.8",
+          "title": "openSUSE update-ca-certificates(8)",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "nixos",
+      "name": "NixOS",
+      "category": "operating_system",
+      "trust_source": "os",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "Mozilla root store (nixpkgs `cacert`)",
+      "location": "`/etc/ssl/certs/ca-certificates.crt` (also `ca-bundle.crt`, `/etc/pki/tls/certs/ca-bundle.crt`)",
+      "update_mechanism": "Channel update and `nixos-rebuild switch`",
+      "override": "`security.pki.certificateFiles`, `security.pki.certificates`, `security.pki.caBundle`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Update the channel and rebuild.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/NixOS/nixpkgs/master/nixos/modules/security/ca.nix",
+          "title": "nixpkgs: nixos/modules/security/ca.nix",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "android",
+      "name": "Android",
+      "category": "operating_system",
+      "trust_source": "os",
+      "platforms": [
+        "android"
+      ],
+      "bundle_origin": "Android-curated root store",
+      "location": "Android 14+: `/apex/com.android.conscrypt/cacerts` (Conscrypt module); older: `/system/etc/security/cacerts`; user-added: `/data/misc/keychain`",
+      "update_mechanism": "Android 14+: Google Play system updates (Mainline); older: vendor OS update only",
+      "override": null,
+      "revocation_channel": [
+        "Google Play services"
+      ],
+      "remediation": "Keep Google Play services and Google Play system updates current. Devices without Google Play services that run Android 13 or older depend on vendor updates.",
+      "version_notes": null,
+      "notes": "Google pushed an equivalent block through Google Play services around 22:00 UTC on Monday 2026-10-19 (the blog gives the weekday; the date follows from the 2026-10-17 report).",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://source.android.com/docs/core/ota/modular-system/conscrypt",
+          "title": "Android: Conscrypt module",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://android.googlesource.com/platform/external/conscrypt/+/refs/heads/main/platform/src/main/java/org/conscrypt/TrustedCertificateStore.java",
+          "title": "Conscrypt source: TrustedCertificateStore.java",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://blog.google/security/protecting-chrome-and-android-users-from-compromised-emudhra-intermediate-ca-certificates/",
+          "title": "Google: protecting Chrome and Android users from compromised eMudhra intermediates",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "chromeos",
+      "name": "ChromeOS",
+      "category": "operating_system",
+      "trust_source": "os",
+      "platforms": [
+        "chromeos"
+      ],
+      "bundle_origin": "Chrome Root Store (browser)",
+      "location": "Compiled into Chrome",
+      "update_mechanism": "ChromeOS auto-update and Chrome component updater",
+      "override": null,
+      "revocation_channel": [
+        "CRLSet"
+      ],
+      "remediation": "Nothing for the browser.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "The Chrome Root Store covers the Chrome browser on ChromeOS from Chrome 114; whether system services and Android or Linux apps on ChromeOS use it is not documented.",
+      "sources": [
+        {
+          "url": "https://chromium.googlesource.com/chromium/src/+/main/net/data/ssl/chrome_root_store/faq.md",
+          "title": "Chrome Root Store FAQ",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "freebsd",
+      "name": "FreeBSD",
+      "category": "operating_system",
+      "trust_source": "os",
+      "platforms": [
+        "freebsd"
+      ],
+      "bundle_origin": "Mozilla root store",
+      "location": "Base system: `/etc/ssl/cert.pem` and `/etc/ssl/certs` (`certctl`); port: `/usr/local/share/certs/ca-root-nss.crt` (`ca_root_nss`)",
+      "update_mechanism": "`freebsd-update` (base); `pkg upgrade ca_root_nss` (port)",
+      "override": "`/usr/local/share/certs`, then `certctl rehash`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Run `freebsd-update fetch install` and `pkg upgrade ca_root_nss`.",
+      "version_notes": "`certctl` first appeared in FreeBSD 12.2.",
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://man.freebsd.org/cgi/man.cgi?query=certctl&sektion=8",
+          "title": "FreeBSD certctl(8)",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/freebsd/freebsd-ports/main/security/ca_root_nss/Makefile",
+          "title": "FreeBSD ports: ca_root_nss",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "container-images",
+      "name": "Container images (Debian, Ubuntu, Alpine bases)",
+      "category": "container",
+      "trust_source": "bundled",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "Distribution `ca-certificates` at image build time",
+      "location": "`/etc/ssl/certs/ca-certificates.crt` inside the image",
+      "update_mechanism": "Image rebuild",
+      "override": null,
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Rebuild from an updated base image, or run `apt-get update && apt-get install -y ca-certificates` (Alpine: `apk upgrade ca-certificates`) in the build.",
+      "version_notes": null,
+      "notes": "An image's files do not change after it is built; a running container keeps the bundle it was built with.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://docs.docker.com/docker-hub/image-library/trusted-content/",
+          "title": "Docker: trusted content (official images)",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "distroless",
+      "name": "distroless images",
+      "category": "container",
+      "trust_source": "bundled",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "`ca-certificates` in the `static` and `base` images (Debian 13 based)",
+      "location": "`/etc/ssl/certs/ca-certificates.crt` inside the image",
+      "update_mechanism": "Image rebuild from a new distroless digest",
+      "override": null,
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Rebuild from the current distroless image digest.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/GoogleContainerTools/distroless/main/base/README.md",
+          "title": "distroless: base images README",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "scratch-images",
+      "name": "scratch images (static Go / Rust binaries)",
+      "category": "container",
+      "trust_source": "bundled",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "Whatever the build copies in, or roots compiled into the binary",
+      "location": "`COPY`-ed bundle, Go `x509roots/fallback`, or Rust `webpki-roots`",
+      "update_mechanism": "Image and binary rebuild",
+      "override": null,
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Rebuild with an updated copied bundle, Go fallback module or webpki-roots crate.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://docs.docker.com/build/building/base-images/",
+          "title": "Docker: base images (FROM scratch)",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://pkg.go.dev/golang.org/x/crypto/x509roots/fallback",
+          "title": "Go x509roots/fallback",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "github-runners",
+      "name": "GitHub-hosted Actions runners",
+      "category": "container",
+      "trust_source": "os",
+      "platforms": [
+        "linux",
+        "windows",
+        "macos"
+      ],
+      "bundle_origin": "Runner image OS store",
+      "location": null,
+      "update_mechanism": "Provider image updates (weekly cadence, 2-3 day rollout)",
+      "override": null,
+      "revocation_channel": [
+        "Inherits from OS"
+      ],
+      "remediation": "Nothing for hosted runners beyond the next image; self-hosted runners and job containers need their own updates.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/actions/runner-images/main/README.md",
+          "title": "actions/runner-images README",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "aws-lambda",
+      "name": "AWS Lambda managed runtimes",
+      "category": "container",
+      "trust_source": "bundled",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "The language runtime's own bundle inside the managed runtime",
+      "location": "Runtime image; `/var/runtime/ca-cert.pem` holds extra Amazon CAs only",
+      "update_mechanism": "Automatic runtime updates by AWS (default mode)",
+      "override": "`NODE_EXTRA_CA_CERTS=/var/runtime/ca-cert.pem` restores the Node.js 18 behaviour on Node.js 20+",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Keep the runtime update mode on Auto. Functions that vendor certifi or their own bundle, and container-image functions, need a redeploy or rebuild.",
+      "version_notes": "From Node.js 20, Lambda no longer loads the extra Amazon CAs by default.",
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://docs.aws.amazon.com/lambda/latest/dg/lambda-nodejs.html",
+          "title": "AWS Lambda: Node.js runtimes",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://docs.aws.amazon.com/lambda/latest/dg/runtimes-update.html",
+          "title": "AWS Lambda: runtime updates",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "cloud-run",
+      "name": "Google Cloud Run (source deployments)",
+      "category": "container",
+      "trust_source": "bundled",
+      "platforms": [
+        "linux"
+      ],
+      "bundle_origin": "Base image OS store",
+      "location": "Inside the base image",
+      "update_mechanism": "Automatic base image updates, when enabled",
+      "override": null,
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Enable automatic base image updates, or redeploy.",
+      "version_notes": null,
+      "notes": "Without automatic base image updates the bundle changes only on redeploy.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://cloud.google.com/run/docs/configuring/services/automatic-base-image-updates",
+          "title": "Cloud Run: automatic base image updates",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "esp-idf",
+      "name": "ESP-IDF (ESP32 family)",
+      "category": "embedded",
+      "trust_source": "bundled",
+      "platforms": [
+        "embedded"
+      ],
+      "bundle_origin": "Mozilla NSS root list (full, or a filtered subset of about 35)",
+      "location": "Embedded in the firmware image",
+      "update_mechanism": "Firmware update over the air (OTA), or `esp_crt_bundle_set()` at runtime",
+      "override": "`CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE_PATH` adds certificates to the default bundle; `esp_crt_bundle_set()` replaces it at runtime",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Rebuild firmware with the current bundle and ship it over the air, or push a new bundle through `esp_crt_bundle_set()`.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/protocols/esp_crt_bundle.html",
+          "title": "ESP-IDF: ESP x509 certificate bundle",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "cisco-ios",
+      "name": "Cisco IOS / IOS XE",
+      "category": "embedded",
+      "trust_source": "bundled",
+      "platforms": [
+        "embedded"
+      ],
+      "bundle_origin": "Cisco built-in CAs and the Cisco Trusted Root Store bundle",
+      "location": "PKI trustpool on the device",
+      "update_mechanism": "Automatic trustpool update from Cisco (`cabundle url`), or software update",
+      "override": "`crypto pki trustpool policy` / `cabundle url`; `crypto pki trustpool import url`",
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Import the current Cisco bundle with `crypto pki trustpool import url` or check that automatic updates are enabled.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/sec-vpn/b-security-vpn/m_sec-pki-trustpool-mgmt.html",
+          "title": "Cisco IOS XE: PKI trustpool management",
+          "retrieved": "2026-11-02"
+        },
+        {
+          "url": "https://www.cisco.com/security/pki/",
+          "title": "Cisco PKI: trusted root stores",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "fortios",
+      "name": "Fortinet FortiOS",
+      "category": "embedded",
+      "trust_source": "bundled",
+      "platforms": [
+        "embedded"
+      ],
+      "bundle_origin": "Fortinet CA bundle",
+      "location": "On the appliance",
+      "update_mechanism": "FortiGuard certificate-bundle updates; offline import",
+      "override": null,
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Check that the FortiGuard certificate bundle is current.",
+      "version_notes": null,
+      "notes": "Source is a Fortinet-run community technical tip rather than the administration guide.",
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://community.fortinet.com/fortigate-3/technical-tip-configuration-changes-after-certificate-bundle-updates-fortiguard-and-impact-upon-fortimanager-97598",
+          "title": "Fortinet community: certificate bundle updates via FortiGuard",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "junos",
+      "name": "Juniper Junos OS",
+      "category": "embedded",
+      "trust_source": "bundled",
+      "platforms": [
+        "embedded"
+      ],
+      "bundle_origin": "Juniper trusted CA bundle",
+      "location": "On the device",
+      "update_mechanism": "Automatic download from Juniper's content delivery network (default)",
+      "override": null,
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Check that the dynamic trusted-CA update has run.",
+      "version_notes": null,
+      "notes": null,
+      "verified": true,
+      "unverified_note": null,
+      "sources": [
+        {
+          "url": "https://networkingdocs.hpe.com/documentation/us/en/software/junos/pki/topics/topic-map/dynamic-update-trusted-ca.html",
+          "title": "Junos OS: dynamic update of trusted CA bundles",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "smart-tv",
+      "name": "Smart TVs / set-top boxes",
+      "category": "embedded",
+      "trust_source": "bundled",
+      "platforms": [
+        "embedded"
+      ],
+      "bundle_origin": "Vendor-chosen roots",
+      "location": "Firmware",
+      "update_mechanism": "Firmware update, if the vendor ships one",
+      "override": null,
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Apply vendor firmware updates; there is usually no user-side fix.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "Generalisation without a vendor source; embedded TLS stacks such as wolfSSL load CA certificates from compiled-in buffers.",
+      "sources": [
+        {
+          "url": "https://www.wolfssl.com/documentation/manuals/wolfssl/group__CertsKeys.html",
+          "title": "wolfSSL manual: certificate and key APIs",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "automotive",
+      "name": "Automotive (infotainment / telematics)",
+      "category": "embedded",
+      "trust_source": "bundled",
+      "platforms": [
+        "embedded"
+      ],
+      "bundle_origin": "Vendor-chosen roots",
+      "location": "Head-unit or telematics control unit (TCU) firmware",
+      "update_mechanism": "OTA or dealer service update",
+      "override": null,
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Apply manufacturer updates.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "Generalisation without a manufacturer source.",
+      "sources": [
+        {
+          "url": "https://www.wolfssl.com/documentation/manuals/wolfssl/group__CertsKeys.html",
+          "title": "wolfSSL manual: certificate and key APIs",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    },
+    {
+      "id": "industrial",
+      "name": "Industrial controllers (PLCs, HMIs)",
+      "category": "embedded",
+      "trust_source": "bundled",
+      "platforms": [
+        "embedded"
+      ],
+      "bundle_origin": "Vendor-chosen roots (often mbedTLS or wolfSSL)",
+      "location": "Firmware",
+      "update_mechanism": "Vendor firmware update",
+      "override": null,
+      "revocation_channel": [
+        "none"
+      ],
+      "remediation": "Apply vendor firmware updates; isolate devices that cannot be updated.",
+      "version_notes": null,
+      "notes": null,
+      "verified": false,
+      "unverified_note": "Generalisation without a vendor source. PLC = programmable logic controller; HMI = human-machine interface.",
+      "sources": [
+        {
+          "url": "https://www.wolfssl.com/documentation/manuals/wolfssl/group__CertsKeys.html",
+          "title": "wolfSSL manual: certificate and key APIs",
+          "retrieved": "2026-11-02"
+        }
+      ],
+      "last_verified": "2026-11-02"
+    }
+  ]
+}
