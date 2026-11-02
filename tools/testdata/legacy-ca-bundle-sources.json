@@ -1,0 +1,259 @@
+{
+  "metadata": {
+    "description": "Software CA trust store sources — bundled vs OS-delegated",
+    "updated": "2026-11-01",
+    "context": "eMudhra intermediate CA compromise (October 2026)"
+  },
+  "entries": [
+    {
+      "name": "Chrome / Chromium",
+      "category": "browser",
+      "trust_source": "hybrid",
+      "bundle_origin": "Chrome Root Store",
+      "embedded_in": "binary",
+      "update_mechanism": "Component Updater (~24h) + browser release",
+      "os_override": "Enterprise/user OS roots supplemented",
+      "platforms": ["windows", "macos", "linux", "android", "chromeos"]
+    },
+    {
+      "name": "Microsoft Edge",
+      "category": "browser",
+      "trust_source": "hybrid",
+      "bundle_origin": "Microsoft Trusted Root Program CTL",
+      "embedded_in": "binary",
+      "update_mechanism": "Component Updater + browser release",
+      "os_override": "Enterprise/user OS roots supplemented",
+      "platforms": ["windows", "macos"]
+    },
+    {
+      "name": "Firefox",
+      "category": "browser",
+      "trust_source": "bundled",
+      "bundle_origin": "Mozilla NSS certdata.txt",
+      "embedded_in": "libnssckbi shared library",
+      "update_mechanism": "Browser release",
+      "os_override": "security.enterprise_roots.enabled (Win/macOS default on)",
+      "platforms": ["windows", "macos", "linux", "android"]
+    },
+    {
+      "name": "Safari",
+      "category": "browser",
+      "trust_source": "os",
+      "bundle_origin": "Apple Root Program",
+      "embedded_in": null,
+      "update_mechanism": "OS update",
+      "os_override": null,
+      "platforms": ["macos", "ios"]
+    },
+    {
+      "name": "Tor Browser",
+      "category": "browser",
+      "trust_source": "bundled",
+      "bundle_origin": "Mozilla NSS (Firefox ESR fork)",
+      "embedded_in": "libnssckbi in install dir",
+      "update_mechanism": "Tor Browser release (ESR cadence)",
+      "os_override": "security.enterprise_roots.enabled (default off)",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "Python (requests / certifi)",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "bundle_origin": "Mozilla roots via certifi PyPI",
+      "embedded_in": "certifi/cacert.pem in site-packages",
+      "update_mechanism": "pip install --upgrade certifi",
+      "os_override": "REQUESTS_CA_BUNDLE, SSL_CERT_FILE, --use-feature=truststore",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "Node.js (official builds)",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "bundle_origin": "Mozilla roots compiled in",
+      "embedded_in": "src/node_root_certs.h → binary",
+      "update_mechanism": "Node.js release",
+      "os_override": "--use-openssl-ca, NODE_EXTRA_CA_CERTS, NODE_USE_SYSTEM_CA=1",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "Java / JVM (OpenJDK)",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "bundle_origin": "Oracle/OpenJDK Root CA Program",
+      "embedded_in": "$JAVA_HOME/lib/security/cacerts",
+      "update_mechanism": "JDK release or keytool",
+      "os_override": "-Djavax.net.ssl.trustStore",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "Go (standard library)",
+      "category": "language_runtime",
+      "trust_source": "fallback",
+      "bundle_origin": "OS primary; Mozilla fallback since 1.20",
+      "embedded_in": "compiled into binary if fallback imported",
+      "update_mechanism": "Go release (fallback); OS (primary)",
+      "os_override": "SSL_CERT_FILE, SSL_CERT_DIR",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "Rust (webpki-roots)",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "bundle_origin": "Mozilla roots at compile time",
+      "embedded_in": "compiled into binary",
+      "update_mechanism": "cargo update + rebuild",
+      "os_override": "use rustls-native-certs crate instead",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "Dart / Flutter",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "bundle_origin": "BoringSSL-derived roots",
+      "embedded_in": "Dart VM binary",
+      "update_mechanism": "SDK release",
+      "os_override": "SecurityContext API",
+      "platforms": ["windows", "macos", "linux", "android", "ios"]
+    },
+    {
+      "name": "Deno",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "bundle_origin": "Mozilla roots via webpki-roots",
+      "embedded_in": "compiled into binary",
+      "update_mechanism": "Deno release",
+      "os_override": "DENO_TLS_CA_STORE=system",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "Bun",
+      "category": "language_runtime",
+      "trust_source": "bundled",
+      "bundle_origin": "Mozilla roots compiled in",
+      "embedded_in": "compiled into binary",
+      "update_mechanism": "Bun release",
+      "os_override": "config override",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "pip",
+      "category": "cli_tool",
+      "trust_source": "bundled",
+      "bundle_origin": "Vendored certifi",
+      "embedded_in": "certifi inside pip package",
+      "update_mechanism": "pip self-update",
+      "os_override": "--cert, PIP_CERT",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "npm / yarn",
+      "category": "cli_tool",
+      "trust_source": "bundled",
+      "bundle_origin": "Inherits Node.js compiled-in Mozilla",
+      "embedded_in": "Node.js binary",
+      "update_mechanism": "Node.js update",
+      "os_override": "NODE_EXTRA_CA_CERTS, cafile in .npmrc",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "cargo (official)",
+      "category": "cli_tool",
+      "trust_source": "bundled",
+      "bundle_origin": "webpki-roots (compiled-in Mozilla)",
+      "embedded_in": "binary",
+      "update_mechanism": "cargo/rustup update + rebuild",
+      "os_override": "CARGO_HTTP_CAINFO, SSL_CERT_FILE",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "AWS CLI v2",
+      "category": "cli_tool",
+      "trust_source": "bundled",
+      "bundle_origin": "certifi via botocore",
+      "embedded_in": "botocore/cacert.pem",
+      "update_mechanism": "aws-cli package update",
+      "os_override": "AWS_CA_BUNDLE",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "gcloud SDK",
+      "category": "cli_tool",
+      "trust_source": "bundled",
+      "bundle_origin": "certifi (vendored)",
+      "embedded_in": "lib/third_party/certifi/cacert.pem",
+      "update_mechanism": "gcloud components update",
+      "os_override": "CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "az (Azure CLI)",
+      "category": "cli_tool",
+      "trust_source": "bundled",
+      "bundle_origin": "certifi (vendored)",
+      "embedded_in": "Python certifi in az install",
+      "update_mechanism": "az CLI update",
+      "os_override": "REQUESTS_CA_BUNDLE",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "curl (system)",
+      "category": "cli_tool",
+      "trust_source": "os",
+      "bundle_origin": "System OpenSSL / SecureTransport",
+      "embedded_in": null,
+      "update_mechanism": "OS update",
+      "os_override": "CURL_CA_BUNDLE, --cacert",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "Docker base images",
+      "category": "container",
+      "trust_source": "bundled",
+      "bundle_origin": "ca-certificates frozen at build time",
+      "embedded_in": "/etc/ssl/certs/ca-certificates.crt",
+      "update_mechanism": "Image rebuild",
+      "os_override": null,
+      "platforms": ["linux"]
+    },
+    {
+      "name": "ESP-IDF (ESP32)",
+      "category": "embedded",
+      "trust_source": "bundled",
+      "bundle_origin": "Mozilla roots via mbedTLS gen_crt_bundle.py",
+      "embedded_in": "flash firmware",
+      "update_mechanism": "OTA firmware update only",
+      "os_override": "CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE_PATH",
+      "platforms": ["embedded"]
+    },
+    {
+      "name": "VS Code",
+      "category": "desktop",
+      "trust_source": "hybrid",
+      "bundle_origin": "Electron (Chromium + Node.js)",
+      "embedded_in": "binary",
+      "update_mechanism": "App auto-update",
+      "os_override": "NODE_EXTRA_CA_CERTS",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "Slack Desktop",
+      "category": "desktop",
+      "trust_source": "hybrid",
+      "bundle_origin": "Electron (Chromium + Node.js)",
+      "embedded_in": "binary",
+      "update_mechanism": "App auto-update",
+      "os_override": "NODE_EXTRA_CA_CERTS",
+      "platforms": ["windows", "macos", "linux"]
+    },
+    {
+      "name": "Thunderbird",
+      "category": "desktop",
+      "trust_source": "bundled",
+      "bundle_origin": "Mozilla NSS (same as Firefox)",
+      "embedded_in": "libnssckbi",
+      "update_mechanism": "Thunderbird release",
+      "os_override": "certutil",
+      "platforms": ["windows", "macos", "linux"]
+    }
+  ]
+}

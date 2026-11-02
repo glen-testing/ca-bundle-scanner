@@ -1,0 +1,1339 @@
+//! End-to-end tests of the ca-bundle-scanner binary. Every issue ID from
+//! ISSUES.md has a true-positive (tp) and a false-positive (fp) test.
+//! All runs use --no-system so the host trust store cannot affect results.
+
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+use assert_cmd::Command;
+use serde_json::Value;
+
+fn certs_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("certs/emudhra")
+}
+fn data_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data")
+}
+fn der(name: &str) -> Vec<u8> {
+    fs::read(certs_dir().join(format!("{name}.der"))).unwrap()
+}
+fn data(name: &str) -> Vec<u8> {
+    fs::read(data_dir().join(name)).unwrap()
+}
+fn pem(der: &[u8], label: &str) -> String {
+    const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::new();
+    for chunk in der.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        for i in 0..4 {
+            if i <= chunk.len() {
+                s.push(B64[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                s.push('=');
+            }
+        }
+    }
+    let body: Vec<String> = s
+        .as_bytes()
+        .chunks(64)
+        .map(|c| String::from_utf8(c.to_vec()).unwrap())
+        .collect();
+    format!(
+        "-----BEGIN {label}-----\n{}\n-----END {label}-----\n",
+        body.join("\n")
+    )
+}
+fn b64(der: &[u8]) -> String {
+    pem(der, "X")
+        .lines()
+        .filter(|l| !l.starts_with("-----"))
+        .collect()
+}
+
+const TARGET: &str = "EM_DV_TLS_CA_G3B_emSign";
+fn target_pem() -> String {
+    pem(&der(TARGET), "CERTIFICATE")
+}
+fn clean_pem() -> String {
+    String::from_utf8(data("clean_leaf.pem")).unwrap()
+}
+fn clean_der() -> Vec<u8> {
+    let p = clean_pem();
+    let body: String = p.lines().filter(|l| !l.starts_with("-----")).collect();
+    decode_b64(&body)
+}
+fn decode_b64(s: &str) -> Vec<u8> {
+    let val = |c: u8| match c {
+        b'A'..=b'Z' => c - b'A',
+        b'a'..=b'z' => c - b'a' + 26,
+        b'0'..=b'9' => c - b'0' + 52,
+        b'+' => 62,
+        _ => 63,
+    };
+    let mut out = Vec::new();
+    let (mut acc, mut bits) = (0u32, 0);
+    for c in s.bytes().filter(|c| *c != b'=') {
+        acc = (acc << 6) | val(c) as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    out
+}
+
+struct Out {
+    code: i32,
+    json: Value,
+    stdout: String,
+    stderr: String,
+}
+
+fn run_args(args: &[&str], env: &[(&str, &str)]) -> Out {
+    let mut cmd = Command::cargo_bin("ca-bundle-scanner").unwrap();
+    cmd.args(args);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let o = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+    Out {
+        code: o.status.code().unwrap_or(-1),
+        json: serde_json::from_str(&stdout).unwrap_or(Value::Null),
+        stdout,
+        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+    }
+}
+
+/// Scan paths with the eMudhra profile, JSON output, single job, no system paths.
+fn scan(paths: &[&Path]) -> Out {
+    let mut args = vec![
+        "--profile",
+        "emudhra",
+        "--no-system",
+        "--json",
+        "--jobs",
+        "1",
+    ];
+    let strs: Vec<String> = paths
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    for s in &strs {
+        args.push("-p");
+        args.push(s);
+    }
+    run_args(&args, &[])
+}
+
+fn write(dir: &Path, name: &str, bytes: impl AsRef<[u8]>) -> PathBuf {
+    let p = dir.join(name);
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(&p, bytes).unwrap();
+    p
+}
+
+fn findings(o: &Out) -> Vec<Value> {
+    o.json["findings"].as_array().cloned().unwrap_or_default()
+}
+fn action(o: &Out) -> Vec<Value> {
+    findings(o)
+        .into_iter()
+        .filter(|f| f["action_required"] == true)
+        .collect()
+}
+fn errors(o: &Out) -> Vec<Value> {
+    o.json["issues"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|i| i["severity"] == "error")
+        .collect()
+}
+fn has_sha(o: &Out, sha: &str) -> bool {
+    findings(o).iter().any(|f| f["sha256"] == sha)
+}
+const TARGET_SHA: &str = "42c4accd12c4f59597925e1a08a7a90102608543809308d50ec427e118ba1493";
+
+fn assert_found(o: &Out) {
+    assert_eq!(
+        o.code, 1,
+        "expected exit 1\nstdout: {}\nstderr: {}",
+        o.stdout, o.stderr
+    );
+    assert!(!action(o).is_empty());
+}
+fn assert_clean(o: &Out) {
+    assert_eq!(
+        o.code, 0,
+        "expected exit 0\nstdout: {}\nstderr: {}",
+        o.stdout, o.stderr
+    );
+    assert!(action(o).is_empty());
+    assert!(errors(o).is_empty(), "unexpected errors: {:?}", errors(o));
+}
+
+fn gzip(bytes: &[u8]) -> Vec<u8> {
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    e.write_all(bytes).unwrap();
+    e.finish().unwrap()
+}
+fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for (n, b) in entries {
+        w.start_file(*n, opts).unwrap();
+        w.write_all(b).unwrap();
+    }
+    w.finish().unwrap().into_inner()
+}
+fn tar_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut b = tar::Builder::new(Vec::new());
+    for (n, d) in entries {
+        let mut h = tar::Header::new_gnu();
+        h.set_size(d.len() as u64);
+        h.set_mode(0o644);
+        h.set_cksum();
+        b.append_data(&mut h, n, *d).unwrap();
+    }
+    b.into_inner().unwrap()
+}
+fn ar_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut v = b"!<arch>\n".to_vec();
+    for (n, d) in entries {
+        v.extend_from_slice(
+            format!(
+                "{:<16}{:<12}{:<6}{:<6}{:<8}{:<10}`\n",
+                n,
+                0,
+                0,
+                0,
+                644,
+                d.len()
+            )
+            .as_bytes(),
+        );
+        v.extend_from_slice(d);
+        if d.len() % 2 == 1 {
+            v.push(b'\n');
+        }
+    }
+    v
+}
+fn cpio_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut v = Vec::new();
+    let mut push = |name: &str, d: &[u8], mode: u32| {
+        let hdr =
+            format!(
+            "070701{:08x}{:08x}{:08x}{:08x}{:08x}{:08x}{:08x}{:08x}{:08x}{:08x}{:08x}{:08x}{:08x}",
+            1, mode, 0, 0, 1, 0, d.len(), 0, 0, 0, 0, name.len() + 1, 0
+        );
+        v.extend_from_slice(hdr.as_bytes());
+        v.extend_from_slice(name.as_bytes());
+        v.push(0);
+        while v.len() % 4 != 0 {
+            v.push(0);
+        }
+        v.extend_from_slice(d);
+        while v.len() % 4 != 0 {
+            v.push(0);
+        }
+    };
+    for (n, d) in entries {
+        push(n, d, 0o100644);
+    }
+    push("TRAILER!!!", b"", 0);
+    v
+}
+fn rpm_of(payload: &[u8]) -> Vec<u8> {
+    let mut v = vec![0xed, 0xab, 0xee, 0xdb];
+    v.resize(96, 0);
+    let header = [0x8e, 0xad, 0xe8, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    v.extend_from_slice(&header); // signature header, 16 bytes (already 8-aligned)
+    v.extend_from_slice(&header); // main header
+    v.extend_from_slice(payload);
+    v
+}
+
+// ── C01: nested certificates after a non-matching DER span ──────────────
+
+#[test]
+fn c01_tp_p7b_p12_and_stray_header() {
+    let t = tempfile::tempdir().unwrap();
+    let p7 = write(t.path(), "a.p7b", data("target.p7b"));
+    let p12 = write(t.path(), "b.p12", data("target_nopass.p12"));
+    let mut stray = vec![0x30, 0x82, 0x0f, 0x00];
+    stray.extend_from_slice(&der(TARGET));
+    stray.extend(std::iter::repeat_n(0u8, 0x1000));
+    let bin = write(t.path(), "c.bin", stray);
+    for p in [&p7, &p12, &bin] {
+        let o = scan(&[p]);
+        assert_found(&o);
+        assert!(has_sha(&o, TARGET_SHA), "{}", p.display());
+    }
+}
+
+#[test]
+fn c01_fp_clean_containers() {
+    let t = tempfile::tempdir().unwrap();
+    let p7 = write(t.path(), "a.p7b", data("clean.p7b"));
+    let p12 = write(t.path(), "b.p12", data("clean_nopass.p12"));
+    let mut stray = vec![0x30, 0x82, 0x0f, 0x00];
+    stray.extend_from_slice(&clean_der());
+    stray.extend(std::iter::repeat_n(0u8, 0x1000));
+    let bin = write(t.path(), "c.bin", stray);
+    assert_clean(&scan(&[&p7, &p12, &bin]));
+}
+
+// ── C02: malformed PEM blocks must not hide the rest ────────────────────
+
+#[test]
+fn c02_tp_bad_block_and_unterminated_begin() {
+    let t = tempfile::tempdir().unwrap();
+    let bad = "-----BEGIN CERTIFICATE-----\n!!not base64!!\n-----END CERTIFICATE-----\n";
+    let mismatched = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END X509 CRL-----\n";
+    let unterminated = "-----BEGIN CERTIFICATE-----\nMIIBAAAA\n";
+    let a = write(t.path(), "a.pem", format!("{bad}{}", target_pem()));
+    let b = write(t.path(), "b.pem", format!("{mismatched}{}", target_pem()));
+    let c = write(t.path(), "c.pem", format!("{unterminated}{}", target_pem()));
+    let mut bin = vec![0xffu8, 0xfe, 0x00];
+    bin.extend_from_slice(unterminated.as_bytes());
+    bin.extend_from_slice(target_pem().as_bytes());
+    let d = write(t.path(), "d.bin", bin);
+    for p in [&a, &b, &c, &d] {
+        let o = scan(&[p]);
+        assert_found(&o);
+        assert!(has_sha(&o, TARGET_SHA), "{}", p.display());
+    }
+}
+
+#[test]
+fn c02_fp_bad_block_with_clean_cert() {
+    let t = tempfile::tempdir().unwrap();
+    let bad = "-----BEGIN CERTIFICATE-----\n!!not base64!!\n-----END CERTIFICATE-----\n";
+    let a = write(t.path(), "a.pem", format!("{bad}{}", clean_pem()));
+    assert_clean(&scan(&[&a]));
+}
+
+// ── C03: only the distrusted root drives the verdict ─────────────────────
+
+#[test]
+fn c03_tp_ecc_g3_is_distrusted() {
+    let t = tempfile::tempdir().unwrap();
+    let p = write(
+        t.path(),
+        "g3.pem",
+        pem(&der("emSign_ECC_Root_G3"), "CERTIFICATE"),
+    );
+    let o = scan(&[&p]);
+    assert_found(&o);
+    assert_eq!(action(&o)[0]["type"], "distrusted-root");
+}
+
+#[test]
+fn c03_fp_g1_c1_c3_are_informational() {
+    let t = tempfile::tempdir().unwrap();
+    let text: String = ["emSign_Root_G1", "emSign_Root_C1", "emSign_ECC_Root_C3"]
+        .iter()
+        .map(|n| pem(&der(n), "CERTIFICATE"))
+        .collect();
+    let p = write(t.path(), "patched-certifi.pem", text);
+    let o = scan(&[&p]);
+    assert_clean(&o);
+    let f = findings(&o);
+    assert_eq!(f.len(), 3);
+    assert!(f
+        .iter()
+        .all(|x| x["type"] == "info-root" && x["action_required"] == false));
+    assert!(!o.stdout.contains("make the system trust"));
+}
+
+// ── C04: exit codes ──────────────────────────────────────────────────────
+
+#[test]
+fn c04_tp_failures_are_not_clean() {
+    let t = tempfile::tempdir().unwrap();
+    let missing = t.path().join("nope.pem");
+    let o = scan(&[&missing]);
+    assert_eq!(o.code, 3, "{}", o.stdout);
+    assert!(!errors(&o).is_empty());
+
+    if cfg!(unix) && !is_root_user() {
+        let p = write(t.path(), "locked.pem", target_pem());
+        set_mode(&p, 0o000);
+        let o = scan(&[&p]);
+        set_mode(&p, 0o644);
+        assert_eq!(o.code, 3);
+    }
+    // Nothing scanned at all.
+    let o = run_args(&["--profile", "emudhra", "--no-system", "--json"], &[]);
+    assert_eq!(o.code, 3);
+    // Usage errors exit 2, never 1.
+    assert_eq!(
+        run_args(&["--profile", "emudhra", "--scan-paht", "x"], &[]).code,
+        2
+    );
+    assert_eq!(run_args(&["--profile", "emudhra", "-p"], &[]).code, 2);
+    assert_eq!(run_args(&["--no-system"], &[]).code, 2);
+    assert_eq!(run_args(&["-f", "abcd"], &[]).code, 2);
+    let h = run_args(&["--help"], &[]);
+    assert_eq!(h.code, 0);
+    assert!(h.stdout.contains("Usage"));
+    let v = run_args(&["--version"], &[]);
+    assert_eq!(v.code, 0);
+    assert!(v.stdout.contains(env!("CARGO_PKG_VERSION")));
+}
+
+#[test]
+fn c04_fp_readable_clean_file_exits_zero() {
+    let t = tempfile::tempdir().unwrap();
+    let p = write(t.path(), "ok.pem", clean_pem());
+    let o = scan(&[&p]);
+    assert_clean(&o);
+    assert_eq!(o.json["files_scanned"], 1);
+}
+
+#[cfg(unix)]
+fn set_mode(p: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(p, fs::Permissions::from_mode(mode)).unwrap();
+}
+#[cfg(not(unix))]
+fn set_mode(_: &Path, _: u32) {}
+fn is_root_user() -> bool {
+    std::env::var("USER").map(|u| u == "root").unwrap_or(false)
+}
+
+// ── C05: code-signing intermediates ─────────────────────────────────────
+
+#[test]
+fn c05_tp_code_signing_cas() {
+    let t = tempfile::tempdir().unwrap();
+    let names = [
+        "EM_OV_CS_CA_G3B_emSign",
+        "EM_OV_CS_CA_G3C_emSign",
+        "EM_OV_CS_CA_G3B_AAA",
+        "EM_OV_CS_CA_G3C_AAA",
+    ];
+    let text: String = names.iter().map(|n| pem(&der(n), "CERTIFICATE")).collect();
+    let p = write(t.path(), "cs.pem", text);
+    let o = scan(&[&p]);
+    assert_found(&o);
+    assert_eq!(action(&o).len(), 4);
+    assert!(action(&o).iter().all(|f| f["type"] == "compromised"));
+}
+
+#[test]
+fn c05_fp_other_code_signing_cert() {
+    let t = tempfile::tempdir().unwrap();
+    let p = write(t.path(), "other.pem", clean_pem());
+    assert_clean(&scan(&[&p]));
+}
+
+// ── C06: same compromised key in a different certificate ────────────────
+
+#[test]
+fn c06_tp_reissued_cert_and_bare_key() {
+    let t = tempfile::tempdir().unwrap();
+    let p = write(t.path(), "reissued.pem", data("reissued_same_key.pem"));
+    let o = scan(&[&p]);
+    assert_found(&o);
+    let f = &action(&o)[0];
+    assert_eq!(f["match"], "public-key");
+    assert_eq!(f["type"], "compromised");
+
+    // The 97-byte EC point alone, as a trust-anchor list would store it.
+    let target = der(TARGET);
+    let point_at = target
+        .windows(3)
+        .position(|w| w == [0x03, 0x62, 0x00])
+        .unwrap()
+        + 3;
+    let mut bin = vec![0u8; 512];
+    bin.extend_from_slice(&target[point_at..point_at + 97]);
+    bin.extend(vec![0u8; 512]);
+    let q = write(t.path(), "anchors.bin", bin);
+    let o = scan(&[&q]);
+    assert_found(&o);
+    assert_eq!(action(&o)[0]["match"], "public-key");
+}
+
+#[test]
+fn c06_fp_unrelated_key() {
+    let t = tempfile::tempdir().unwrap();
+    let p = write(t.path(), "leaf.pem", data("leaf_issued_by_testca.pem"));
+    assert_clean(&scan(&[&p]));
+}
+
+// ── C07: AAA Certificate Services cross-sign root ───────────────────────
+
+#[test]
+fn c07_tp_aaa_in_a_bundle() {
+    let t = tempfile::tempdir().unwrap();
+    let p = write(
+        t.path(),
+        "botocore/cacert.pem",
+        pem(&der("Sectigo_AAA_Certificate_Services"), "CERTIFICATE"),
+    );
+    let o = scan(&[&p]);
+    assert_found(&o);
+    assert_eq!(action(&o)[0]["type"], "cross-sign-root");
+}
+
+// --root resolves the Unix location table.
+#[cfg(not(windows))]
+#[test]
+fn c07_fp_aaa_in_platform_store_is_informational() {
+    let t = tempfile::tempdir().unwrap();
+    write(
+        t.path(),
+        "root/.mozilla/firefox/p.default/cert9.db",
+        der("Sectigo_AAA_Certificate_Services"),
+    );
+    let o = run_args(
+        &[
+            "--profile",
+            "emudhra",
+            "--json",
+            "--root",
+            t.path().to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert_eq!(o.code, 0, "{}", o.stdout);
+    let f = findings(&o);
+    assert_eq!(f.len(), 1);
+    assert_eq!(f[0]["context"], "platform-store");
+    assert_eq!(f[0]["action_required"], false);
+}
+
+// ── C08: directory walk coverage ─────────────────────────────────────────
+
+#[cfg(unix)]
+#[test]
+fn c08_tp_symlink_der_uppercase_hashname() {
+    let t = tempfile::tempdir().unwrap();
+    let store = t.path().join("store");
+    let real = write(t.path(), "real/target.crt", target_pem());
+    fs::create_dir_all(&store).unwrap();
+    std::os::unix::fs::symlink(&real, store.join("link.pem")).unwrap();
+    let cases = [
+        ("store2/ca.der", der(TARGET)),
+        ("store3/CA.PEM", target_pem().into_bytes()),
+        ("store4/b74d2bd5.0", target_pem().into_bytes()),
+        ("store5/ca-bundle.trust.p11-kit", target_pem().into_bytes()),
+    ];
+    let mut dirs = vec![store.clone()];
+    for (n, b) in &cases {
+        let p = write(t.path(), n, b);
+        dirs.push(p.parent().unwrap().to_path_buf());
+    }
+    for d in &dirs {
+        let o = scan(&[d]);
+        assert_found(&o);
+        assert!(has_sha(&o, TARGET_SHA), "{}", d.display());
+    }
+}
+
+#[test]
+fn c08_fp_same_layout_clean() {
+    let t = tempfile::tempdir().unwrap();
+    write(t.path(), "ca.der", clean_der());
+    write(t.path(), "CA.PEM", clean_pem());
+    write(t.path(), "b74d2bd5.0", clean_pem());
+    write(t.path(), "notes.txt", "hello");
+    let o = scan(&[t.path()]);
+    assert_clean(&o);
+    assert_eq!(o.json["files_scanned"], 4);
+}
+
+// ── C09: DMG / MSI detection must not skip scanning ─────────────────────
+
+#[test]
+fn c09_tp_koly_and_ole2_still_scanned() {
+    let t = tempfile::tempdir().unwrap();
+    let mut a = target_pem().into_bytes();
+    a.extend_from_slice(&[0u8; 600]);
+    a.extend_from_slice(b"koly");
+    let p = write(t.path(), "evade.pem", &a);
+    assert_found(&scan(&[&p]));
+
+    let mut dmg = der(TARGET);
+    let mut trailer = vec![0u8; 512];
+    trailer[..4].copy_from_slice(b"koly");
+    trailer[4..8].copy_from_slice(&[0, 0, 0, 4]);
+    trailer[8..12].copy_from_slice(&[0, 0, 2, 0]);
+    dmg.extend_from_slice(&trailer);
+    let o = scan(&[&write(t.path(), "x.dmg", &dmg)]);
+    assert_found(&o);
+    assert!(o.json["issues"].to_string().contains("disk image"));
+
+    let mut msi = vec![0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+    msi.extend_from_slice(&der(TARGET));
+    assert_found(&scan(&[&write(t.path(), "x.msi", &msi)]));
+}
+
+#[test]
+fn c09_fp_clean_with_koly() {
+    let t = tempfile::tempdir().unwrap();
+    let mut a = clean_pem().into_bytes();
+    a.extend_from_slice(b"koly");
+    assert_clean(&scan(&[&write(t.path(), "a.pem", &a)]));
+}
+
+// ── C10: TRUSTED CERTIFICATE and X509 CERTIFICATE labels ────────────────
+
+#[test]
+fn c10_tp_trusted_and_x509_labels() {
+    let t = tempfile::tempdir().unwrap();
+    let a = write(t.path(), "trust.crt", data("trusted_g3_tls.pem"));
+    let o = scan(&[&a]);
+    assert_found(&o);
+    assert!(action(&o)[0]["source"]
+        .as_str()
+        .unwrap()
+        .contains("tls-server"));
+    let b = write(t.path(), "old.pem", pem(&der(TARGET), "X509 CERTIFICATE"));
+    assert_found(&scan(&[&b]));
+}
+
+#[test]
+fn c10_fp_trusted_clean() {
+    let t = tempfile::tempdir().unwrap();
+    assert_clean(&scan(&[&write(
+        t.path(),
+        "trust.crt",
+        data("trusted_clean.pem"),
+    )]));
+}
+
+// ── C11: escaped PEM and base64-wrapped certificates ────────────────────
+
+#[test]
+fn c11_tp_json_escaped_and_base64() {
+    let t = tempfile::tempdir().unwrap();
+    let escaped = target_pem().replace('\n', "\\n");
+    let a = write(t.path(), "conf.json", format!("{{\"ca\": \"{escaped}\"}}"));
+    assert_found(&scan(&[&a]));
+    let kube = format!(
+        "clusters:\n- cluster:\n    certificate-authority-data: {}\n    server: https://k\n",
+        b64(target_pem().as_bytes())
+    );
+    assert_found(&scan(&[&write(t.path(), "kubeconfig", kube)]));
+    let raw = format!("cert = \"{}\"\n", b64(&der(TARGET)));
+    assert_found(&scan(&[&write(t.path(), "settings.toml", raw)]));
+}
+
+#[test]
+fn c11_fp_base64_of_clean_cert() {
+    let t = tempfile::tempdir().unwrap();
+    let kube = format!(
+        "certificate-authority-data: {}\n",
+        b64(clean_pem().as_bytes())
+    );
+    let escaped = clean_pem().replace('\n', "\\n");
+    let a = write(t.path(), "kubeconfig", kube);
+    let b = write(t.path(), "conf.json", format!("{{\"ca\": \"{escaped}\"}}"));
+    assert_clean(&scan(&[&a, &b]));
+}
+
+// ── C12: multi-member gzip ───────────────────────────────────────────────
+
+#[test]
+fn c12_tp_second_gzip_member() {
+    let t = tempfile::tempdir().unwrap();
+    let mut gz = gzip(clean_pem().as_bytes());
+    gz.extend(gzip(target_pem().as_bytes()));
+    assert_found(&scan(&[&write(t.path(), "b.pem.gz", gz)]));
+}
+
+#[test]
+fn c12_fp_multi_member_clean() {
+    let t = tempfile::tempdir().unwrap();
+    let mut gz = gzip(clean_pem().as_bytes());
+    gz.extend(gzip(b"just text"));
+    assert_clean(&scan(&[&write(t.path(), "b.pem.gz", gz)]));
+}
+
+// ── C13: encrypted containers are reported as not inspected ─────────────
+
+#[test]
+fn c13_tp_encrypted_p12_and_zip_are_incomplete() {
+    let t = tempfile::tempdir().unwrap();
+    for (n, f) in [
+        ("a.p12", "target_encrypted.p12"),
+        ("b.zip", "target_encrypted.zip"),
+    ] {
+        let o = scan(&[&write(t.path(), n, data(f))]);
+        assert_eq!(o.code, 3, "{n}: {}", o.stdout);
+        assert!(!errors(&o).is_empty());
+    }
+}
+
+#[test]
+fn c13_fp_plain_containers_no_error() {
+    let t = tempfile::tempdir().unwrap();
+    let a = write(t.path(), "a.p12", data("clean_nopass.p12"));
+    let b = write(
+        t.path(),
+        "b.zip",
+        zip_of(&[("x.pem", clean_pem().as_bytes())]),
+    );
+    assert_clean(&scan(&[&a, &b]));
+}
+
+// ── C14: presence in a distrust / source location is not trust ──────────
+
+// --root resolves the Unix location table.
+#[cfg(not(windows))]
+#[test]
+fn c14_fp_blocklist_source_and_trust_flags() {
+    let t = tempfile::tempdir().unwrap();
+    let r = t.path();
+    write(r, "etc/pki/ca-trust/source/blocklist/em.pem", target_pem());
+    write(
+        r,
+        "usr/share/pki/ca-trust-source/blocklist/em.pem",
+        target_pem(),
+    );
+    write(
+        r,
+        "usr/share/ca-certificates/mozilla/g3.crt",
+        pem(&der("emSign_ECC_Root_G3"), "CERTIFICATE"),
+    );
+    let p11 = format!(
+        "[p11-kit-object-v1]\nclass: certificate\nx-distrusted: true\n{}",
+        target_pem()
+    );
+    write(r, "etc/pki/ca-trust/source/anchors/distrusted.p11-kit", p11);
+    write(
+        r,
+        "etc/pki/tls/certs/ca-bundle.trust.crt",
+        data("trusted_g3_rejected.pem"),
+    );
+    write(
+        r,
+        "etc/pki/ca-trust/extracted/openssl/ca-bundle.trust.crt",
+        data("trusted_g3_email.pem"),
+    );
+    let o = run_args(
+        &[
+            "--profile",
+            "emudhra",
+            "--json",
+            "--root",
+            r.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert_eq!(o.code, 0, "{}", o.stdout);
+    let f = findings(&o);
+    assert_eq!(f.len(), 6, "{f:#?}");
+    assert!(f.iter().all(|x| x["action_required"] == false));
+    let ctxs: Vec<&str> = f.iter().map(|x| x["context"].as_str().unwrap()).collect();
+    assert!(ctxs.contains(&"distrust") && ctxs.contains(&"source") && ctxs.contains(&"restricted"));
+}
+
+// --root resolves the Unix location table.
+#[cfg(not(windows))]
+#[test]
+fn c14_tp_same_certs_in_active_locations() {
+    let t = tempfile::tempdir().unwrap();
+    let r = t.path();
+    write(r, "etc/pki/ca-trust/source/anchors/em.pem", target_pem());
+    write(
+        r,
+        "etc/ssl/certs/ca-certificates.crt",
+        data("trusted_g3_tls.pem"),
+    );
+    let o = run_args(
+        &[
+            "--profile",
+            "emudhra",
+            "--json",
+            "--root",
+            r.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert_eq!(o.code, 1, "{}", o.stdout);
+    assert_eq!(action(&o).len(), 2);
+}
+
+// ── C15: location table under --root ────────────────────────────────────
+
+// --root resolves the Unix location table.
+#[cfg(not(windows))]
+#[test]
+fn c15_tp_aws_cli_and_snap_firefox_paths() {
+    let t = tempfile::tempdir().unwrap();
+    let r = t.path();
+    let aaa = pem(&der("Sectigo_AAA_Certificate_Services"), "CERTIFICATE");
+    write(
+        r,
+        "usr/lib/python3.9/site-packages/awscli/botocore/cacert.pem",
+        &aaa,
+    );
+    write(
+        r,
+        "usr/local/aws-cli/v2/2.30.0/dist/awscli/botocore/cacert.pem",
+        &aaa,
+    );
+    write(
+        r,
+        "home/bob/snap/firefox/common/.mozilla/firefox/x/cert9.db",
+        der(TARGET),
+    );
+    let o = run_args(
+        &[
+            "--profile",
+            "emudhra",
+            "--json",
+            "--root",
+            r.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert_eq!(o.code, 1);
+    assert_eq!(action(&o).len(), 3, "{:#?}", findings(&o));
+}
+
+// --root resolves the Unix location table.
+#[cfg(not(windows))]
+#[test]
+fn c15_fp_same_paths_clean() {
+    let t = tempfile::tempdir().unwrap();
+    let r = t.path();
+    write(
+        r,
+        "usr/lib/python3.9/site-packages/awscli/botocore/cacert.pem",
+        clean_pem(),
+    );
+    write(
+        r,
+        "home/bob/snap/firefox/common/.mozilla/firefox/x/cert9.db",
+        clean_der(),
+    );
+    let o = run_args(
+        &[
+            "--profile",
+            "emudhra",
+            "--json",
+            "--root",
+            r.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert_clean(&o);
+    assert_eq!(o.json["files_scanned"], 2);
+}
+
+// ── C16: home scan skips package caches ─────────────────────────────────
+
+#[test]
+fn c16_home_scan_skips_cargo_registry_but_finds_others() {
+    let t = tempfile::tempdir().unwrap();
+    let h = t.path();
+    write(h, ".cargo/registry/src/crate/tests/em.pem", target_pem());
+    write(h, "projects/ok.pem", clean_pem());
+    let home = h.to_str().unwrap();
+    let args = [
+        "--profile",
+        "emudhra",
+        "--no-system",
+        "--scan-home",
+        "--json",
+    ];
+    // fp: the only target is inside a skipped cache.
+    let o = run_args(&args, &[("HOME", home)]);
+    assert_eq!(o.code, 0, "{}", o.stdout);
+    assert!(findings(&o).is_empty());
+    assert_eq!(o.json["files_scanned"], 1);
+    // tp: a target elsewhere in HOME is found.
+    write(h, "projects/certs/em.pem", target_pem());
+    let o = run_args(&args, &[("HOME", home)]);
+    assert_eq!(o.code, 1);
+    assert_eq!(action(&o).len(), 1);
+}
+
+// ── C18: JSON output is valid for any path ───────────────────────────────
+
+#[cfg(unix)]
+#[test]
+fn c18_tp_hostile_file_names_roundtrip() {
+    let t = tempfile::tempdir().unwrap();
+    let name = "we\"ird\\na\tme\n.pem";
+    let p = write(t.path(), name, target_pem());
+    let o = scan(&[&p]);
+    assert!(o.json.is_object(), "invalid JSON: {}", o.stdout);
+    assert_eq!(action(&o)[0]["path"], p.to_str().unwrap());
+    let z = write(
+        t.path(),
+        "e.zip",
+        zip_of(&[("\"],\"x\":[\"", target_pem().as_bytes())]),
+    );
+    let o = scan(&[&z]);
+    assert!(o.json.is_object());
+    assert_eq!(o.json.as_object().unwrap().len(), 8);
+}
+
+#[test]
+fn c18_fp_plain_names_valid_json() {
+    let t = tempfile::tempdir().unwrap();
+    let o = scan(&[&write(t.path(), "a.pem", clean_pem())]);
+    assert!(o.json.is_object());
+    assert_eq!(o.json["verdict"], "clean");
+}
+
+// ── C19 / P06: counts and duplicate paths ───────────────────────────────
+
+#[cfg(unix)]
+#[test]
+fn c19_duplicates_scanned_once() {
+    let t = tempfile::tempdir().unwrap();
+    let p = write(t.path(), "a/x.pem", target_pem());
+    std::os::unix::fs::symlink(&p, t.path().join("a/y.pem")).unwrap();
+    let o = scan(&[&p, &p, &t.path().join("a")]);
+    assert_eq!(o.json["files_scanned"], 1, "{}", o.stdout);
+    assert_eq!(action(&o).len(), 1);
+    // fp: two distinct files are both counted.
+    write(t.path(), "b/x.pem", clean_pem());
+    write(t.path(), "b/y.pem", clean_pem());
+    let o = scan(&[&t.path().join("b")]);
+    assert_eq!(o.json["files_scanned"], 2);
+}
+
+// ── C20: large archive members are scanned, not discarded ────────────────
+
+#[test]
+fn c20_tp_entry_over_50mb_in_tar_gz() {
+    let t = tempfile::tempdir().unwrap();
+    let mut big = vec![b'\n'; 60 << 20];
+    big.extend_from_slice(target_pem().as_bytes());
+    let tgz = gzip(&tar_of(&[("big.pem", &big)]));
+    let o = scan(&[&write(t.path(), "a.tar.gz", tgz)]);
+    assert_found(&o);
+    assert!(errors(&o).is_empty());
+}
+
+#[test]
+fn c20_fp_large_clean_entry() {
+    let t = tempfile::tempdir().unwrap();
+    let mut big = vec![b'\n'; 60 << 20];
+    big.extend_from_slice(clean_pem().as_bytes());
+    let tgz = gzip(&tar_of(&[("big.pem", &big)]));
+    assert_clean(&scan(&[&write(t.path(), "a.tar.gz", tgz)]));
+}
+
+// ── C21: ZIP with a prefix (executable JAR) ─────────────────────────────
+
+#[test]
+fn c21_tp_prefixed_jar() {
+    let t = tempfile::tempdir().unwrap();
+    let mut v = b"#!/bin/sh\nexec java -jar \"$0\" \"$@\"\n".to_vec();
+    v.extend(zip_of(&[(
+        "BOOT-INF/classes/ca.pem",
+        target_pem().as_bytes(),
+    )]));
+    assert_found(&scan(&[&write(t.path(), "app.jar", v)]));
+}
+
+#[test]
+fn c21_fp_prefixed_jar_clean() {
+    let t = tempfile::tempdir().unwrap();
+    let mut v = b"#!/bin/sh\nexec java -jar \"$0\"\n".to_vec();
+    v.extend(zip_of(&[(
+        "BOOT-INF/classes/ca.pem",
+        clean_pem().as_bytes(),
+    )]));
+    assert_clean(&scan(&[&write(t.path(), "app.jar", v)]));
+}
+
+// ── C22: RPM payload (gzip-compressed cpio) ─────────────────────────────
+
+#[test]
+fn c22_tp_rpm_payload() {
+    let t = tempfile::tempdir().unwrap();
+    let rpm = rpm_of(&gzip(&cpio_of(&[(
+        "./etc/pki/x.pem",
+        target_pem().as_bytes(),
+    )])));
+    assert_found(&scan(&[&write(t.path(), "ca.rpm", rpm)]));
+}
+
+#[test]
+fn c22_fp_rpm_clean() {
+    let t = tempfile::tempdir().unwrap();
+    let rpm = rpm_of(&gzip(&cpio_of(&[(
+        "./etc/pki/x.pem",
+        clean_pem().as_bytes(),
+    )])));
+    assert_clean(&scan(&[&write(t.path(), "ca.rpm", rpm)]));
+}
+
+// ── C23: Electron asar archives ─────────────────────────────────────────
+
+fn asar(content: &[u8]) -> Vec<u8> {
+    let json = format!(
+        "{{\"files\":{{\"ca.pem\":{{\"size\":{},\"offset\":\"0\"}}}}}}",
+        content.len()
+    );
+    let mut v = vec![4, 0, 0, 0];
+    v.extend_from_slice(&((json.len() + 8) as u32).to_le_bytes());
+    v.extend_from_slice(&((json.len() + 4) as u32).to_le_bytes());
+    v.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    v.extend_from_slice(json.as_bytes());
+    v.extend_from_slice(content);
+    v
+}
+
+#[test]
+fn c23_tp_asar() {
+    let t = tempfile::tempdir().unwrap();
+    let o = scan(&[&write(t.path(), "app.asar", asar(&der(TARGET)))]);
+    assert_found(&o);
+    assert_eq!(action(&o)[0]["source"], "Electron .asar");
+}
+
+#[test]
+fn c23_fp_asar_clean() {
+    let t = tempfile::tempdir().unwrap();
+    assert_clean(&scan(&[&write(t.path(), "app.asar", asar(&clean_der()))]));
+}
+
+// ── C24: --cert / --fingerprint with certificates outside 200..8192 bytes ─
+
+#[test]
+fn c24_tp_large_cert_by_file_and_fingerprint() {
+    let t = tempfile::tempdir().unwrap();
+    let big = data("big_cert.pem");
+    let big_der = decode_b64(
+        &String::from_utf8(big.clone())
+            .unwrap()
+            .lines()
+            .filter(|l| !l.starts_with("---"))
+            .collect::<String>(),
+    );
+    assert!(big_der.len() > 8192);
+    let certfile = write(t.path(), "big.pem", &big);
+    let mut bin = vec![7u8; 100];
+    bin.extend_from_slice(&big_der);
+    let b = write(t.path(), "blob.bin", &bin);
+    let o = run_args(
+        &[
+            "-c",
+            certfile.to_str().unwrap(),
+            "--no-system",
+            "--json",
+            "-b",
+            b.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert_eq!(o.code, 1, "{}", o.stdout);
+    let sha = action(&o)[0]["sha256"].as_str().unwrap().to_string();
+    let o = run_args(
+        &[
+            "-f",
+            &sha,
+            "--no-system",
+            "--json",
+            "-b",
+            b.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert_eq!(o.code, 1);
+}
+
+#[test]
+fn c24_fp_large_clean_blob() {
+    let t = tempfile::tempdir().unwrap();
+    let certfile = write(t.path(), "big.pem", data("big_cert.pem"));
+    let b = write(t.path(), "blob.bin", clean_der());
+    let o = run_args(
+        &[
+            "-c",
+            certfile.to_str().unwrap(),
+            "--no-system",
+            "--json",
+            "-b",
+            b.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert_eq!(o.code, 0, "{}", o.stdout);
+}
+
+// ── C25: ar with a zero-size member ──────────────────────────────────────
+
+#[test]
+fn c25_tp_member_after_empty_one() {
+    let t = tempfile::tempdir().unwrap();
+    let deb = ar_of(&[
+        ("debian-binary", b"2.0\n"),
+        ("empty", b""),
+        ("data.tar", &tar_of(&[("ca.pem", target_pem().as_bytes())])),
+    ]);
+    assert_found(&scan(&[&write(t.path(), "x.deb", deb)]));
+}
+
+#[test]
+fn c25_fp_member_after_empty_one_clean() {
+    let t = tempfile::tempdir().unwrap();
+    let deb = ar_of(&[
+        ("empty", b""),
+        ("data.tar", &tar_of(&[("ca.pem", clean_pem().as_bytes())])),
+    ]);
+    assert_clean(&scan(&[&write(t.path(), "x.deb", deb)]));
+}
+
+// ── C26: labels name the actual issuer; consistent type names ───────────
+
+#[test]
+fn c26_labels() {
+    let t = tempfile::tempdir().unwrap();
+    let text = format!(
+        "{}{}",
+        target_pem(),
+        pem(&der("EM_DV_TLS_CA_G3B_AAA"), "CERTIFICATE")
+    );
+    let o = scan(&[&write(t.path(), "b.pem", text)]);
+    let names: Vec<String> = action(&o)
+        .iter()
+        .map(|f| f["cert"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        names
+            .iter()
+            .any(|n| n == "EM DV TLS CA - G3B (issued by emSign Root TLS CA - G3)"),
+        "{names:?}"
+    );
+    assert!(names
+        .iter()
+        .any(|n| n == "EM DV TLS CA - G3B (issued by AAA Certificate Services)"));
+    assert!(!o.stdout.contains("(emSign Root)"));
+    assert!(action(&o).iter().all(|f| f["type"] == "compromised"));
+}
+
+// ── C27: fingerprint text is a reference, not a compromise ──────────────
+
+#[test]
+fn c27_fingerprint_in_source_is_informational() {
+    let t = tempfile::tempdir().unwrap();
+    let colon: String = TARGET_SHA
+        .as_bytes()
+        .chunks(2)
+        .map(|c| std::str::from_utf8(c).unwrap().to_uppercase())
+        .collect::<Vec<_>>()
+        .join(":");
+    let src = format!("const BLOCKED: [&str; 2] = [\"sha256:{TARGET_SHA}\", \"{colon}\"];\n");
+    let o = scan(&[&write(t.path(), "blocklist.rs", src)]);
+    assert_eq!(o.code, 0, "{}", o.stdout);
+    let f = findings(&o);
+    assert!(!f.is_empty() && f.iter().all(|x| x["type"] == "reference"));
+    // fp: a different 64-hex string is not reported at all.
+    let o = scan(&[&write(
+        t.path(),
+        "other.rs",
+        format!("x = \"{}\"", "ab".repeat(32)),
+    )]);
+    assert!(findings(&o).is_empty());
+}
+
+// ── C28: no false reassurance for PKCS#7 ────────────────────────────────
+
+#[test]
+fn c28_no_pkcs7_reassurance_warning() {
+    let t = tempfile::tempdir().unwrap();
+    let o = scan(&[&write(t.path(), "c.p7b", data("clean.p7b"))]);
+    assert!(!o.json["issues"]
+        .to_string()
+        .contains("no matching certificates inside"));
+    let o = scan(&[&write(t.path(), "t.p7b", data("target.p7b"))]);
+    assert_found(&o);
+}
+
+// ── C30: leaf certificates issued by a compromised CA ───────────────────
+
+#[test]
+fn c30_tp_leaf_issued_by_compromised() {
+    let t = tempfile::tempdir().unwrap();
+    let o = scan(&[&write(
+        t.path(),
+        "server.crt",
+        data("leaf_issued_by_compromised.pem"),
+    )]);
+    assert_found(&o);
+    let f = &action(&o)[0];
+    assert_eq!(f["type"], "issued-by-compromised");
+    assert_eq!(f["match"], "authority-key-id");
+}
+
+#[test]
+fn c30_fp_leaf_issued_by_other_ca() {
+    let t = tempfile::tempdir().unwrap();
+    assert_clean(&scan(&[&write(
+        t.path(),
+        "server.crt",
+        data("leaf_issued_by_testca.pem"),
+    )]));
+}
+
+// ── Archive formats end to end (xz, zstd, nested zip) ───────────────────
+
+#[test]
+fn archives_tp_xz_zstd_nested() {
+    let t = tempfile::tempdir().unwrap();
+    let tar = tar_of(&[("etc/ssl/ca.pem", target_pem().as_bytes())]);
+    let mut xz = Vec::new();
+    lzma_rs::xz_compress(&mut std::io::BufReader::new(&tar[..]), &mut xz).unwrap();
+    let zst =
+        ruzstd::encoding::compress_to_vec(&tar[..], ruzstd::encoding::CompressionLevel::Fastest);
+    let inner = zip_of(&[("lib/inner.jar", &zip_of(&[("ca.der", &der(TARGET))]))]);
+    for (n, b) in [("a.tar.xz", xz), ("a.tar.zst", zst), ("outer.war", inner)] {
+        let o = scan(&[&write(t.path(), n, b)]);
+        assert_found(&o);
+        assert!(has_sha(&o, TARGET_SHA), "{n}");
+    }
+}
+
+#[test]
+fn archives_fp_xz_zstd_nested_clean() {
+    let t = tempfile::tempdir().unwrap();
+    let tar = tar_of(&[("etc/ssl/ca.pem", clean_pem().as_bytes())]);
+    let mut xz = Vec::new();
+    lzma_rs::xz_compress(&mut std::io::BufReader::new(&tar[..]), &mut xz).unwrap();
+    let zst =
+        ruzstd::encoding::compress_to_vec(&tar[..], ruzstd::encoding::CompressionLevel::Fastest);
+    let inner = zip_of(&[("lib/inner.jar", &zip_of(&[("ca.der", &clean_der())]))]);
+    let a = write(t.path(), "a.tar.xz", xz);
+    let b = write(t.path(), "a.tar.zst", zst);
+    let c = write(t.path(), "outer.war", inner);
+    assert_clean(&scan(&[&a, &b, &c]));
+}
+
+// ── P04: memory-mapped large files ───────────────────────────────────────
+
+#[test]
+fn p04_large_file_mmap_path() {
+    let t = tempfile::tempdir().unwrap();
+    let mut v = vec![0u8; 3 << 20];
+    v.extend_from_slice(&der(TARGET));
+    assert_found(&scan(&[&write(t.path(), "big.bin", &v)]));
+    let mut c = vec![0u8; 3 << 20];
+    c.extend_from_slice(&clean_der());
+    assert_clean(&scan(&[&write(t.path(), "big2.bin", &c)]));
+}
+
+// ── P07: parallel scanning gives the same answer ─────────────────────────
+
+#[test]
+fn p07_parallel_matches_serial() {
+    let t = tempfile::tempdir().unwrap();
+    for i in 0..24 {
+        let body = if i % 5 == 0 {
+            target_pem()
+        } else {
+            clean_pem()
+        };
+        write(t.path(), &format!("d/{i:02}.pem"), body);
+    }
+    let d = t.path().join("d");
+    let ds = d.to_str().unwrap();
+    let base = ["--profile", "emudhra", "--no-system", "--json", "-p", ds];
+    let serial = run_args(&[&base[..], &["--jobs", "1"]].concat(), &[]);
+    let par = run_args(&[&base[..], &["--jobs", "4"]].concat(), &[]);
+    assert_eq!(serial.json["findings"], par.json["findings"]);
+    assert_eq!(action(&serial).len(), 5);
+}
+
+// ── P11: nesting warning emitted once, not per entry ────────────────────
+
+#[test]
+fn p11_single_nesting_warning() {
+    let t = tempfile::tempdir().unwrap();
+    let files: Vec<(String, Vec<u8>)> = (0..50)
+        .map(|i| (format!("f{i}.txt"), b"x".to_vec()))
+        .collect();
+    let refs: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_slice()))
+        .collect();
+    let deep = zip_of(&[("l1.zip", &zip_of(&[("l2.zip", &zip_of(&refs))]))]);
+    let o = scan(&[&write(t.path(), "deep.zip", deep)]);
+    let n = o.json["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["message"].as_str().unwrap().contains("nested"))
+        .count();
+    assert_eq!(n, 1);
+    let o = scan(&[&write(t.path(), "flat.zip", zip_of(&refs))]);
+    assert!(o.json["issues"].as_array().unwrap().is_empty());
+}
+
+// ── Text output sanity (human report) ───────────────────────────────────
+
+#[test]
+fn text_output_sections() {
+    let t = tempfile::tempdir().unwrap();
+    let p = write(t.path(), "b.pem", target_pem());
+    let o = run_args(
+        &[
+            "--profile",
+            "emudhra",
+            "--no-system",
+            "-q",
+            "-p",
+            p.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert_eq!(o.code, 1);
+    assert!(o.stdout.starts_with("Result: FOUND"));
+    assert!(o.stdout.contains("COMPROMISED CA CERTIFICATES"));
+    let c = write(t.path(), "c.pem", clean_pem());
+    let o = run_args(
+        &[
+            "--profile",
+            "emudhra",
+            "--no-system",
+            "-q",
+            "-p",
+            c.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert!(o.stdout.starts_with("Result: CLEAN"), "{}", o.stdout);
+}
+
+// ── N04: bundle fingerprint comments do not duplicate certificate matches ─
+
+#[test]
+fn n04_fingerprint_comment_next_to_cert_not_duplicated() {
+    let t = tempfile::tempdir().unwrap();
+    let colon: String = TARGET_SHA
+        .as_bytes()
+        .chunks(2)
+        .map(|c| std::str::from_utf8(c).unwrap().to_uppercase())
+        .collect::<Vec<_>>()
+        .join(":");
+    let bundle = format!(
+        "# Label: \"EM DV\"\n# SHA256 Fingerprint: {colon}\n{}",
+        target_pem()
+    );
+    let o = scan(&[&write(t.path(), "cacert.pem", bundle)]);
+    assert_found(&o);
+    assert_eq!(findings(&o).len(), 1, "{:#?}", findings(&o));
+    assert_eq!(findings(&o)[0]["match"], "certificate");
+}
