@@ -93,6 +93,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Excluded hosts serve anti-bot 403 pages to CI; checked by hand 2026-11-02.
+      # googlesource's rendered faq.md returns 503; its ?format=TEXT form returns 200.
       - uses: lycheeverse/lychee-action@v2
         with:
           args: >-
@@ -100,6 +101,7 @@ jobs:
             --exclude '^https://dev\.mysql\.com/'
             --exclude '^https://gitlab\.torproject\.org/'
             --exclude '^https://www\.cisco\.com/c/'
+            --exclude '^https://chromium\.googlesource\.com/chromium/src/\+/main/net/data/ssl/chrome_root_store/faq\.md$'
             --max-concurrency 4
             --max-retries 3
             --timeout 30
