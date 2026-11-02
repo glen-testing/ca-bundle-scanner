@@ -121,9 +121,8 @@ when nothing else was found), and the part already decompressed is scanned.
   bundles, JDKs, python.org certifi, Electron app frameworks, Firefox profiles.
 - **Windows:** the CryptoAPI system stores `ROOT`, `AuthRoot`, `CA`,
   `TrustedPublisher` and `Disallowed` for LocalMachine and CurrentUser, Git for
-  Windows, JDKs, AWS CLI, Python, Node.js, VS Code, Firefox profiles. The store
-  code is type-checked and linted for Windows locally and runs in the
-  Windows CI job.
+  Windows, JDKs, AWS CLI, Python, Node.js, VS Code, Firefox profiles. The
+  Windows CI job tests the store reader against the runner's stores.
 
 ## Development
 
