@@ -10,8 +10,8 @@ certificates**, one issued by emSign and one cross-signed by Sectigo's
 "AAA Certificate Services", so **16 CA certificates** in all
 ([Mozilla Bugzilla 2083449](https://bugzilla.mozilla.org/show_bug.cgi?id=2083449),
 [Apple support 149555](https://support.apple.com/en-us/149555)). Patching the
-OS trust store does not reach software with its own bundle — Java, Python
-certifi and botocore, Node.js, Electron apps, Docker images — and two paths
+OS trust store does not reach software that ships its own bundle (Java, Python
+certifi and botocore, Node.js, Electron apps, Docker images), and two paths
 are easy to miss:
 
 - **AAA Certificate Services.** The Sectigo cross-signs chain to it. Mozilla
@@ -24,15 +24,15 @@ are easy to miss:
 
 ## Contents
 
-- `docs/` — GitHub Pages site generated from the data file (filterable tables
+- `docs/`: GitHub Pages site generated from the data file (filterable tables
   for browsers, runtimes, CLI tools, servers, containers, desktop apps,
   embedded platforms and operating systems)
-- `data/ca-bundle-sources.json` — the reference data, one source of truth, with
+- `data/ca-bundle-sources.json`: the reference data, one source of truth, with
   per-entry sources and retrieval dates; schema in
   `data/ca-bundle-sources.schema.json`
-- `tools/` — site generator, data validator, and their tests
-- `scanner/` — `ca-bundle-scanner`, a Rust command-line scanner
-- `ISSUES.md` — the validated issue list from the 2026-11-02 review, with the
+- `tools/`: site generator, data validator, and their tests
+- `scanner/`: `ca-bundle-scanner`, a Rust command-line scanner
+- `ISSUES.md`: the validated issue list from the 2026-11-02 review, with the
   tests that prove each fix
 
 ## Scanner
@@ -141,9 +141,9 @@ contribute only public data (public keys, key identifiers).
 
 ## Sources
 
-- [Mozilla Bugzilla 2083449](https://bugzilla.mozilla.org/show_bug.cgi?id=2083449) — incident, 16 certificates, fingerprints
-- [Mozilla Bugzilla 2084101](https://bugzilla.mozilla.org/show_bug.cgi?id=2084101) — emSign ECC Root CA - G3 removal
-- [Apple — About the compromised eMudhra intermediate CAs](https://support.apple.com/en-us/149555)
+- [Mozilla Bugzilla 2083449](https://bugzilla.mozilla.org/show_bug.cgi?id=2083449): incident, 16 certificates, fingerprints
+- [Mozilla Bugzilla 2084101](https://bugzilla.mozilla.org/show_bug.cgi?id=2084101): emSign ECC Root CA - G3 removal
+- [Apple: About the compromised eMudhra intermediate CAs](https://support.apple.com/en-us/149555)
 - [certifi advisory GHSA-6q48-6c7w-9gw2](https://osv.dev/vulnerability/GHSA-6q48-6c7w-9gw2)
 - [Chrome Root Program](https://googlechrome.github.io/chromerootprogram/)
 - [CCADB (Common CA Database)](https://www.ccadb.org/)
