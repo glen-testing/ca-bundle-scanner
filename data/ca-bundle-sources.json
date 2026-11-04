@@ -3,7 +3,7 @@
   "metadata": {
     "title": "CA Bundle Tracker",
     "description": "Which software ships its own Certificate Authority (CA) bundle and which uses the operating system store, with update paths and remediation after the October 2026 eMudhra intermediate CA compromise.",
-    "updated": "2026-11-02",
+    "updated": "2026-11-04",
     "incident": {
       "name": "The eMudhra intermediate CA compromise (October 2026)",
       "compromised_keys": 8,
@@ -2378,9 +2378,9 @@
       "unverified_note": "Whether Thunderbird applies OneCRL updates between releases is not documented.",
       "sources": [
         {
-          "url": "https://hg.mozilla.org/comm-central/raw-file/tip/mail/app/profile/all-thunderbird.js",
-          "title": "comm-central: all-thunderbird.js",
-          "retrieved": "2026-11-02"
+          "url": "https://github.com/thunderbird/thunderbird-desktop/blob/main/mail/app/profile/all-thunderbird.js",
+          "title": "thunderbird-desktop: all-thunderbird.js",
+          "retrieved": "2026-11-04"
         },
         {
           "url": "https://hg.mozilla.org/mozilla-central/raw-file/tip/modules/libpref/init/StaticPrefList.yaml",
@@ -2388,7 +2388,7 @@
           "retrieved": "2026-11-02"
         }
       ],
-      "last_verified": "2026-11-02"
+      "last_verified": "2026-11-04"
     },
     {
       "id": "outlook-classic",
