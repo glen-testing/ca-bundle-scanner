@@ -25,7 +25,7 @@ KeyStore; OneCRL = Mozilla's pushed intermediate-revocation list; CS = code
 signing; WCAG = Web Content Accessibility Guidelines; CI = continuous
 integration.
 
-## C — Correctness (wrong verdicts)
+## C: Correctness (wrong verdicts)
 
 | ID | Issue | Status | Tests (TP / FP) |
 |---|---|---|---|
@@ -60,11 +60,11 @@ integration.
 | C29 | Wrong candidate claims (cargo/rustc webpki-roots, Go/Terraform embedded bundle) | fixed | `locations::tests::no_duplicate_patterns_and_no_bogus_entries`; bare trust-anchor keys are now found anywhere by key matching (`c06_tp_reissued_cert_and_bare_key`) |
 | C30 | Leaf certificates issued by a compromised CA not reported | fixed | `c30_tp_leaf_issued_by_compromised` / `c30_fp_leaf_issued_by_other_ca` |
 
-## P — Speed / efficiency
+## P: Speed / efficiency
 
 | ID | Issue | Status | Tests / evidence |
 |---|---|---|---|
-| P01 | Scalar byte search, two passes per binary | fixed* | `memchr::memmem` / Aho-Corasick and table-driven loops. Measured on the 121 MB nvm `node` binary, one core: old 0.35 s CPU, new 0.53 s CPU — the new scanner runs more checks per byte (public keys, AKI, base64), so per-file CPU is higher, not lower |
+| P01 | Scalar byte search, two passes per binary | fixed* | `memchr::memmem` / Aho-Corasick and table-driven loops. Measured on the 121 MB nvm `node` binary, one core: old 0.35 s CPU, new 0.53 s CPU. The new scanner runs more checks per byte (public keys, AKI, base64), so per-file CPU is higher, not lower |
 | P02 | Source scan: two copies + ~38 passes | fixed* | Single pass for hex runs (text only), one Aho-Corasick pass for keywords; npm `node_modules` (1,945 files, 506 MB, every file now read per C08): 2.4 s CPU |
 | P03 | Per-stream decompression limits; bombs; memory | fixed | `scan::tests::p03_tp_bomb_is_limited_and_partial_output_scanned` / `scan::tests::p03_fp_under_budget_no_error` |
 | P04 | Whole-file heap reads; >200 MB skipped | fixed | `p04_large_file_mmap_path` (TP and FP halves); files ≥1 MiB are memory-mapped, limit raised to 4 GiB |
@@ -77,7 +77,7 @@ integration.
 | P11 | Depth warning per entry; redundant stats | fixed | `p11_single_nesting_warning` (TP: one warning for 50 nested entries; FP: none when flat) |
 | P12 | Hash-amplification hole for fingerprint-only targets | fixed | `scan::tests::p12_tp_hash_amplification_is_limited` / `scan::tests::p12_fp_known_length_targets_skip_hashing` |
 
-## Q — Code cleanliness
+## Q: Code cleanliness
 
 | ID | Issue | Status | Evidence |
 |---|---|---|---|
@@ -92,7 +92,7 @@ integration.
 | Q09 | Outdated crates | fixed* | zip 9.2.2, x509-parser 0.18.1, ruzstd 0.9.1; `pem`/`hex` dropped |
 | Q10 | fmt/clippy failures, no `rust-version`/`[lints]` | fixed* | `cargo fmt --check` and `cargo clippy --all-targets -D warnings` clean (Linux + Windows target); `rust-version = "1.88"`, `[lints]` table |
 
-## D — Data, docs, website
+## D: Data, docs, website
 
 | ID | Issue | Status | Tests |
 |---|---|---|---|

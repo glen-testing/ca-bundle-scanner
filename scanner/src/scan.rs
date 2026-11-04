@@ -647,7 +647,8 @@ impl<'a> FileScan<'a> {
                         continue;
                     }
                     let subject = cert_cn(&bytes[a..b]);
-                    let cert = format!("{subject} — carries the public key of {}", target.name);
+                    let cert =
+                        format!("{subject}, which carries the public key of {}", target.name);
                     self.push(
                         path,
                         source,

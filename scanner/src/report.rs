@@ -265,14 +265,14 @@ pub fn write_text(w: &mut dyn Write, report: &Report, profile: &Profile) -> io::
         .filter(|l| !matches!(l.status, LocationStatus::Missing))
         .count();
     match report.verdict() {
-        Verdict::Found => writeln!(w, "Result: FOUND — {} finding(s) need action", action.len())?,
+        Verdict::Found => writeln!(w, "Result: FOUND. {} finding(s) need action", action.len())?,
         Verdict::Incomplete => writeln!(
             w,
-            "Result: INCOMPLETE — nothing found, but {errors} item(s) could not be inspected (see errors above)"
+            "Result: INCOMPLETE. Nothing found, but {errors} item(s) could not be inspected (see errors above)"
         )?,
         Verdict::Clean => writeln!(
             w,
-            "Result: CLEAN — no {} found in {} file(s) across {} location(s)",
+            "Result: CLEAN. No {} found in {} file(s) across {} location(s)",
             if profile.name == "custom" { "matching certificates".to_string() } else { format!("{} certificates", profile.name) },
             report.files_scanned,
             scanned_locs
