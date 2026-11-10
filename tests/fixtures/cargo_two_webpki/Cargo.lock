@@ -1,0 +1,34 @@
+# Hand-written: two workspace members pulling different webpki-roots versions.
+version = 3
+
+[[package]]
+name = "api"
+version = "0.1.0"
+dependencies = [
+ "webpki-roots 0.25.4",
+]
+
+[[package]]
+name = "worker"
+version = "0.1.0"
+dependencies = [
+ "tungstenite",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "webpki-roots 0.26.3",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.25.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
