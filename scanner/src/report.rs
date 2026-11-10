@@ -21,6 +21,10 @@ pub enum Context {
     Distrust,
     /// Trust flags exclude TLS server authentication and code signing.
     Restricted,
+    /// The same file also blocks every compromised key by SPKI SHA-256 hash
+    /// (Chromium's compiled-in blocklist, as in patched Electron), so chains through
+    /// the compromised CAs are rejected even though the roots are still present.
+    KeyBlocklist,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
@@ -59,6 +63,8 @@ pub enum Match {
     FingerprintText,
     /// CA name in source / config text.
     Keyword,
+    /// The compromised public keys listed for rejection (SPKI SHA-256 hashes or bare SPKIs).
+    Blocklist,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -79,8 +85,10 @@ pub struct Finding {
 pub fn action_required(kind: Kind, ctx: Context) -> bool {
     !matches!(
         (kind, ctx),
-        (_, Context::Source | Context::Distrust | Context::Restricted)
-            | (Kind::InfoRoot | Kind::Reference, _)
+        (
+            _,
+            Context::Source | Context::Distrust | Context::Restricted | Context::KeyBlocklist
+        ) | (Kind::InfoRoot | Kind::Reference, _)
             | (Kind::CrossSignRoot, Context::PlatformStore)
     )
 }
@@ -237,6 +245,7 @@ fn ctx_note(ctx: Context) -> &'static str {
         Context::Source => " [source dir, not active trust]",
         Context::Distrust => " [distrust list: already blocked]",
         Context::Restricted => " [trust flags exclude TLS and code signing]",
+        Context::KeyBlocklist => " [same binary blocks every compromised key by hash]",
     }
 }
 

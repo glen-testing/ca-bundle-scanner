@@ -90,6 +90,12 @@ pub struct Profile {
     needle_ac: Option<AhoCorasick>,
     keywords: Vec<String>,
     keyword_ac: Option<AhoCorasick>,
+    /// SHA-256 of each distinct compromised SubjectPublicKeyInfo (as in Chromium's SPKI blocklist).
+    blocked_spki: Vec<[u8; 32]>,
+    blocked_ac: Option<AhoCorasick>,
+    /// The same keys as full SubjectPublicKeyInfo DER (as in rustls-webpki's DISTRUSTED_SPKIS).
+    blocked_spki_der: Vec<Vec<u8>>,
+    blocked_der_ac: Option<AhoCorasick>,
 }
 
 /// Minimum needle length; shorter keys would risk chance matches.
@@ -117,6 +123,13 @@ impl Profile {
             _ => cn.clone(),
         };
         let key = cert.public_key().subject_public_key.data.to_vec();
+        if role == Role::Compromised {
+            let h = sha256(cert.public_key().raw);
+            if !self.blocked_spki.contains(&h) {
+                self.blocked_spki.push(h);
+                self.blocked_spki_der.push(cert.public_key().raw.to_vec());
+            }
+        }
         let ski = subject_key_id(&cert).map(|s| s.to_vec());
         if matches!(role, Role::Compromised | Role::DistrustedRoot) {
             self.add_keyword(&cn);
@@ -222,6 +235,35 @@ impl Profile {
         self.needle_ac = (!pats.is_empty()).then(|| AhoCorasick::new(pats).expect("needles"));
         self.keyword_ac =
             (!self.keywords.is_empty()).then(|| AhoCorasick::new(&self.keywords).expect("kw"));
+        self.blocked_ac = (!self.blocked_spki.is_empty())
+            .then(|| AhoCorasick::new(&self.blocked_spki).expect("spki hashes"));
+        self.blocked_der_ac = (!self.blocked_spki_der.is_empty())
+            .then(|| AhoCorasick::new(&self.blocked_spki_der).expect("spki der"));
+    }
+
+    /// Compromised keys blocked in `data`: (by SPKI SHA-256, by bare SPKI DER, total keys).
+    /// `outside_cert` says whether a bare-DER hit at (start, end) lies outside any certificate.
+    pub fn blocked_keys(
+        &self,
+        data: &[u8],
+        outside_cert: impl Fn(usize, usize) -> bool,
+    ) -> (Vec<bool>, Vec<bool>, usize) {
+        let total = self.blocked_spki.len();
+        let mut by_hash = vec![false; total];
+        let mut by_der = vec![false; total];
+        if let Some(ac) = &self.blocked_ac {
+            for m in ac.find_overlapping_iter(data) {
+                by_hash[m.pattern().as_usize()] = true;
+            }
+        }
+        if let Some(ac) = &self.blocked_der_ac {
+            for m in ac.find_overlapping_iter(data) {
+                if outside_cert(m.start(), m.end()) {
+                    by_der[m.pattern().as_usize()] = true;
+                }
+            }
+        }
+        (by_hash, by_der, total)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -335,6 +377,8 @@ mod tests {
             .filter(|n| n.kind == NeedleKind::Ski)
             .count();
         assert_eq!((keys, skis), (12, 8));
+        // The 8 compromised keys, each shared by the emSign and Sectigo certificates.
+        assert_eq!(p.blocked_keys(b"", |_, _| true).2, 8);
     }
 
     #[test]
