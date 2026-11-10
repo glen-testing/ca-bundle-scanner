@@ -1,46 +1,25 @@
 # ca-bundle-tracker
 
-Reference for which software ships its own Certificate Authority (CA) trust
-store and which trusts the host operating system's bundle, plus a scanner that
+What software ships its own Certificate Authority (CA) trust
+store and what trusts the host operating system's bundle? Additionally, a scanner that
 finds compromised or distrusted CA certificates on a machine.
 
-Built in response to the October 2026 eMudhra compromise: **8 CA private keys**
-(6 TLS, 2 code-signing) were trivially recoverable, and each key has **two
-certificates**, one issued by emSign and one cross-signed by Sectigo's
-"AAA Certificate Services", so **16 CA certificates** in all
-([Mozilla Bugzilla 2083449](https://bugzilla.mozilla.org/show_bug.cgi?id=2083449),
-[Apple support 149555](https://support.apple.com/en-us/149555)). Patching the
-OS trust store does not reach software that ships its own bundle (Java, Python
-certifi and botocore, Node.js, Electron apps, Docker images), and two paths
-are easy to miss:
-
-- **AAA Certificate Services.** The Sectigo cross-signs chain to it. Mozilla
-  removed its websites trust bit on 2025-04-16 (bug 1957685), but older bundle
-  snapshots still carry it, e.g. AWS CLI before 2.38.4. OpenSSL-, Python- and
-  Java-based clients do not check revocation, so a bundle that contains AAA
-  accepts chains through the compromised cross-signs.
-- **macOS `/etc/ssl/cert.pem`.** Apple's fix did not cover command-line tools
-  that read this file (curl, git, python3, ruby, perl, openssl).
+Built in response to the October 2026 eMudhra compromise.
 
 ## Contents
 
-- `docs/`: GitHub Pages site generated from the data file (filterable tables
-  for browsers, runtimes, CLI tools, servers, containers, desktop apps,
-  embedded platforms and operating systems)
-- `data/ca-bundle-sources.json`: the reference data, one source of truth, with
-  per-entry sources and retrieval dates; schema in
-  `data/ca-bundle-sources.schema.json`
+- `docs/`: GitHub Pages site covering filterable tables for browsers, runtimes, CLI tools, servers, containers, desktop apps, embedded platforms and operating systems
+- `data/ca-bundle-sources.json`: reference data with per-entry sources and retrieval dates; schema in `data/ca-bundle-sources.schema.json`
 - `tools/`: site generator, data validator, and their tests
 - `scanner/`: `ca-bundle-scanner`, a Rust command-line scanner
-- `ISSUES.md`: the validated issue list from the 2026-11-02 review, with the
-  tests that prove each fix
+- `ISSUES.md`: Issued found during development and future ideas.
 
 ## Scanner
 
     cargo install --path scanner
     ca-bundle-scanner --profile emudhra
 
-or, without installing: `cd scanner && cargo build --release && ./target/release/ca-bundle-scanner --profile emudhra`.
+Alternatively, without installing: `cd scanner && cargo build --release && ./target/release/ca-bundle-scanner --profile emudhra`.
 
 ### What the eMudhra profile looks for
 
@@ -51,19 +30,18 @@ or, without installing: `cd scanner && cargo build --release && ./target/release
 | Cross-sign root | Sectigo AAA Certificate Services | action required in bundles; informational in platform stores (macOS, Windows, NSS), whose vendors block the cross-signs |
 | Same operator, not distrusted | emSign Root CA - G1, Root CA - C1, ECC Root CA - C3 | informational only |
 
-Matching is by exact certificate (SHA-256 of the DER), and also by **public
+Matching is by exact certificate (SHA-256 of the DER), or by **public
 key**, so a re-issued or newly cross-signed certificate with a compromised key,
 or a bare key in a trust-anchor list, is still found. Leaf certificates whose
-Authority Key Identifier names a compromised CA are reported as "issued by a
-compromised CA".
+Authority Key Identifier names a compromised CA are reported as "issued by a compromised CA".
 
-Where a certificate sits matters. Copies in distrust lists (p11-kit blocklists,
+This should take into account distrust lists (p11-kit blocklists,
 `x-distrusted: true`, OpenSSL `TRUSTED CERTIFICATE` reject flags, Windows
-`Disallowed`), in source directories that are not active trust
-(`/usr/share/ca-certificates`, `/usr/share/pki/ca-trust-source`), or with
+`Disallowed`), source directories that are not active trust
+(`/usr/share/ca-certificates`, `/usr/share/pki/ca-trust-source`), additionally
 trust flags that exclude TLS and code signing are reported as informational.
-The same applies to roots inside a binary that also carries the SPKI SHA-256
-hashes of all 8 compromised keys (Chromium's compiled-in blocklist, as in
+
+The same applies to roots inside a binary that also carries the SPKI SHA-256 hashes of all 8 compromised keys (Chromium's compiled-in blocklist, as in
 patched Electron 42.11.16, 43.8.1, 44.9.1 and later): those chains are rejected,
 so the hits are marked `key-blocklist`. The bare-SPKI form compiled into
 rustls-webpki 0.103.16 and later (`DISTRUSTED_SPKIS`, e.g. Signal's Rust core) counts
