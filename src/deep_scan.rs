@@ -49,6 +49,9 @@ pub struct BundleScan {
 }
 
 pub fn scan(bundler: &CertBundlerEntry, dep: &ResolvedDep, config: &RunConfig) -> Result<BundleScan> {
+    if bundler.artifact == Artifact::VersionRule {
+        return Ok(version_rule(bundler, dep));
+    }
     let scanner = find_scanner(config.scanner_path.as_deref())?;
     let artifact = locate_or_fetch(bundler.artifact, dep, &cache_dir(config)?)?;
     let (verdict, certs) = run_scanner(&scanner, &artifact)?;
@@ -57,6 +60,21 @@ pub fn scan(bundler: &CertBundlerEntry, dep: &ResolvedDep, config: &RunConfig) -
 
 /// Affected means the scanner marked at least one finding as needing action; which
 /// roots count (distrusted, cross-sign, compromised) is the scanner's policy, not ours.
+/// Packages whose payload is fetched at install time are judged by version.
+fn version_rule(bundler: &CertBundlerEntry, dep: &ResolvedDep) -> BundleScan {
+    let fixed = match bundler.package {
+        "electron" => crate::database::electron_blocks_compromised_keys(&dep.version),
+        _ => false,
+    };
+    BundleScan {
+        artifact: format!("version rule for {} {}", dep.name, dep.version),
+        verdict: if fixed { "clean" } else { "found" }.into(),
+        certs: vec![],
+        affected_certs: if fixed { vec![] } else { vec!["emSign ECC Root CA - G3 (compiled in, not blocked)".into()] },
+        affected: !fixed,
+    }
+}
+
 pub fn classify(artifact: String, verdict: String, certs: Vec<ScannerFinding>) -> BundleScan {
     let mut affected_certs: Vec<String> = certs.iter().filter(|c| c.action_required).map(|c| c.cert.clone()).collect();
     affected_certs.sort();
@@ -189,6 +207,33 @@ pub fn locate_or_fetch(kind: Artifact, dep: &ResolvedDep, cache: &Path) -> Resul
             let url = meta["dist"]["tarball"].as_str().context("npm metadata has no dist.tarball")?;
             curl_file(url, &cache.join("npm").join(format!("{}-{v}.tgz", n.replace('/', "_"))))
         }
+        Artifact::RubyGem => curl_file(
+            &format!("https://rubygems.org/downloads/{n}-{v}.gem"),
+            &cache.join("gems").join(format!("{n}-{v}.gem")),
+        ),
+        Artifact::HexTarball => curl_file(
+            &format!("https://repo.hex.pm/tarballs/{n}-{v}.tar"),
+            &cache.join("hex").join(format!("{n}-{v}.tar")),
+        ),
+        Artifact::Packagist => {
+            let meta: serde_json::Value = serde_json::from_str(&curl_text(&format!("https://repo.packagist.org/p2/{n}.json"))?)?;
+            let url = meta["packages"][n]
+                .as_array()
+                .and_then(|vs| vs.iter().find(|x| x["version"].as_str().map(|s| s.trim_start_matches('v')) == Some(v)))
+                .and_then(|x| x["dist"]["url"].as_str())
+                .with_context(|| format!("no Packagist dist for {n} {v}"))?
+                .to_string();
+            curl_file(&url, &cache.join("packagist").join(format!("{}-{v}.zip", n.replace('/', "_"))))
+        }
+        Artifact::CpanDist => {
+            let module = n.replace('-', "::");
+            let meta: serde_json::Value = serde_json::from_str(&curl_text(&format!(
+                "https://fastapi.metacpan.org/v1/download_url/{module}?version=%3D%3D{v}"
+            ))?)?;
+            let url = meta["download_url"].as_str().with_context(|| format!("no CPAN release for {n} {v}"))?.to_string();
+            curl_file(&url, &cache.join("cpan").join(format!("{n}-{v}.tar.gz")))
+        }
+        Artifact::VersionRule => bail!("{n} is judged by version, not downloaded"),
         Artifact::GoModule => curl_file(
             &format!("https://proxy.golang.org/{}/@v/{}.zip", go_escape(n), go_escape(v)),
             &cache.join("go").join(format!("{}@{v}.zip", n.replace('/', "_"))),

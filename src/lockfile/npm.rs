@@ -11,6 +11,13 @@ pub fn parse(path: &Path, include_dev: bool) -> Result<ParsedLock> {
     parse_str(&content, include_dev)
 }
 
+/// Packages that end up inside the shipped app even when declared as devDependencies.
+const SHIPPED_DEV: &[&str] = &["electron"];
+
+fn ships_in_app(key: &str) -> bool {
+    SHIPPED_DEV.contains(&name_from_path(key))
+}
+
 fn is_dev(info: &Value) -> bool {
     info.get("dev").and_then(Value::as_bool).unwrap_or(false)
         || info.get("devOptional").and_then(Value::as_bool).unwrap_or(false)
@@ -60,7 +67,7 @@ fn parse_str(content: &str, include_dev: bool) -> Result<ParsedLock> {
     }
     let mut nodes: HashMap<&str, NodeIndex> = HashMap::from([("", graph.root)]);
     for (key, info) in packages {
-        if key.is_empty() || (is_dev(info) && !include_dev) {
+        if key.is_empty() || (is_dev(info) && !include_dev && !ships_in_app(key)) {
             continue;
         }
         let v = info.get("version").and_then(Value::as_str).unwrap_or("");
@@ -78,7 +85,11 @@ fn parse_str(content: &str, include_dev: bool) -> Result<ParsedLock> {
             continue;
         }
         let fields: &[&str] = if key.is_empty() { &fields } else { &fields[..3] };
-        for dep in dep_keys(info, fields) {
+        let mut deps = dep_keys(info, fields);
+        if key.is_empty() && !include_dev {
+            deps.extend(dep_keys(info, &["devDependencies"]).into_iter().filter(|d| SHIPPED_DEV.contains(d)));
+        }
+        for dep in deps {
             if let Some(&to) = resolve(packages, key, dep).and_then(|k| nodes.get(k)) {
                 graph.add_edge(from, to);
             }
@@ -170,6 +181,18 @@ mod tests {
         let p = parse_str(lock, false).unwrap();
         let c = p.graph.path_to(p.graph.find_unique("ssl-root-cas").unwrap()).unwrap();
         assert_eq!(c.last().unwrap(), "ssl-root-cas 1.3.1");
+    }
+
+    #[test]
+    fn tp_electron_devdependency_still_ships() {
+        let lock = r#"{"name":"app","version":"1.0.0","lockfileVersion":3,"packages":{
+          "":{"devDependencies":{"electron":"^44.4.5","jest":"^29"}},
+          "node_modules/electron":{"version":"44.4.5","dev":true},
+          "node_modules/jest":{"version":"29.0.0","dev":true}}}"#;
+        let p = parse_str(lock, false).unwrap();
+        assert_eq!(reachable_versions(&p, "electron"), vec!["44.4.5"]);
+        // fp: other devDependencies stay excluded.
+        assert!(!p.graph.has_dep("jest"));
     }
 
     #[test]

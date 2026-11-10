@@ -17,6 +17,11 @@ pub enum Ecosystem {
     Python,
     Node,
     Go,
+    Ruby,
+    Php,
+    /// Elixir and Erlang packages from Hex.
+    Hex,
+    Perl,
 }
 
 impl std::fmt::Display for Ecosystem {
@@ -26,6 +31,10 @@ impl std::fmt::Display for Ecosystem {
             Ecosystem::Python => "python",
             Ecosystem::Node => "node",
             Ecosystem::Go => "go",
+            Ecosystem::Ruby => "ruby",
+            Ecosystem::Php => "php",
+            Ecosystem::Hex => "hex",
+            Ecosystem::Perl => "perl",
         })
     }
 }
@@ -38,6 +47,10 @@ impl std::str::FromStr for Ecosystem {
             "python" | "pip" | "pypi" => Ok(Ecosystem::Python),
             "node" | "npm" | "js" | "javascript" => Ok(Ecosystem::Node),
             "go" | "golang" => Ok(Ecosystem::Go),
+            "ruby" | "gem" | "bundler" => Ok(Ecosystem::Ruby),
+            "php" | "composer" => Ok(Ecosystem::Php),
+            "hex" | "elixir" | "erlang" | "mix" | "rebar" => Ok(Ecosystem::Hex),
+            "perl" | "cpan" => Ok(Ecosystem::Perl),
             _ => anyhow::bail!("unknown ecosystem: {s}"),
         }
     }
@@ -203,7 +216,7 @@ pub fn run(config: &RunConfig) -> RunOutput {
                 }
                 let dep = parsed.graph.graph[idx].clone();
                 let mut finding = Finding::new(bundler, &dep, path, chain, parsed.evidence, &parsed.graph);
-                finding.mitigated_by = mitigation(bundler, &parsed.graph);
+                finding.mitigated_by = mitigation(bundler, &dep, &parsed.graph);
                 if config.deep_scan && reachable {
                     match deep_scan::scan(bundler, &dep, config) {
                         Ok(b) => finding.bundle = Some(b),
@@ -223,9 +236,19 @@ pub fn run(config: &RunConfig) -> RunOutput {
 
 /// Rust root stores are only consulted through rustls-webpki; if every reachable copy
 /// carries the compromised-key distrust list, chains through those keys fail anyway.
-fn mitigation(bundler: &database::CertBundlerEntry, graph: &graph::DepGraph) -> Option<String> {
-    if !matches!(bundler.package, "webpki-roots" | "webpki-root-certs") {
-        return None;
+fn mitigation(bundler: &database::CertBundlerEntry, dep: &ResolvedDep, graph: &graph::DepGraph) -> Option<String> {
+    match bundler.package {
+        "electron" => {
+            return database::electron_blocks_compromised_keys(&dep.version)
+                .then(|| format!("Electron {} blocks the compromised keys (GHSA-jr5w-w6x2-84p9)", dep.version));
+        }
+        "golang.org/x/crypto/x509roots/fallback" => {
+            let go = graph.find_all("go").first().map(|&i| graph.graph[i].version.clone())?;
+            return database::go_blocks_compromised_keys(&go)
+                .then(|| format!("go.mod requires Go {go}, whose crypto/x509 rejects chains through the compromised keys"));
+        }
+        "webpki-roots" | "webpki-root-certs" => {}
+        _ => return None,
     }
     let verifiers: Vec<&ResolvedDep> = graph
         .find_all("rustls-webpki")

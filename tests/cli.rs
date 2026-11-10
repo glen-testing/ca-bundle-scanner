@@ -239,3 +239,121 @@ fn fp_unfixed_or_mixed_rustls_webpki_still_flagged() {
         assert!(v["findings"][0].get("mitigated_by").is_none(), "{tag}: {v}");
     }
 }
+
+// ── more ecosystems, Electron, Go toolchain ──
+
+fn write_files(tag: &str, files: &[(&str, &str)]) -> PathBuf {
+    let d = tmpdir(tag);
+    for (n, c) in files {
+        std::fs::write(d.join(n), c).unwrap();
+    }
+    d
+}
+
+fn electron_lock(v: &str) -> String {
+    format!(r#"{{"name":"app","version":"1.0.0","lockfileVersion":3,"packages":{{"":{{"devDependencies":{{"electron":"^{v}"}}}},"node_modules/electron":{{"version":"{v}","dev":true}}}}}}"#)
+}
+
+#[test]
+fn tp_electron_devdependency_unpatched_is_found() {
+    let d = write_files("electron-old", &[("package-lock.json", &electron_lock("44.4.5"))]);
+    let (code, v) = run(&["--deep-scan", d.to_str().unwrap()]);
+    assert_eq!(code, 1, "{v}");
+    assert_eq!(packages(&v), vec!["electron 44.4.5"]);
+    assert_eq!(v["findings"][0]["bundle"]["affected"], true);
+}
+
+#[test]
+fn fp_electron_patched_is_mitigated() {
+    let d = write_files("electron-new", &[("package-lock.json", &electron_lock("44.9.1"))]);
+    let (code, v) = run(&["--deep-scan", d.to_str().unwrap()]);
+    assert_eq!(code, 0, "{v}");
+    assert!(v["findings"][0]["mitigated_by"].as_str().unwrap().contains("44.9.1"));
+}
+
+fn go_mod(toolchain: &str) -> String {
+    format!("module example.com/app\n\ngo 1.26\n\ntoolchain go{toolchain}\n\nrequire golang.org/x/crypto/x509roots/fallback v0.0.0-20240916204253-42ee18b96377\n")
+}
+
+#[test]
+fn tp_go_fallback_with_old_toolchain_flagged() {
+    let d = write_files("go-old", &[("go.mod", &go_mod("1.26.9"))]);
+    assert_eq!(run(&[d.to_str().unwrap()]).0, 1);
+}
+
+#[test]
+fn fp_go_fallback_with_fixed_toolchain_mitigated() {
+    let d = write_files("go-new", &[("go.mod", &go_mod("1.26.10"))]);
+    let (code, v) = run(&[d.to_str().unwrap()]);
+    assert_eq!(code, 0, "{v}");
+    assert!(v["findings"][0]["mitigated_by"].as_str().unwrap().contains("1.26.10"));
+}
+
+const GEMFILE_LOCK: &str = "GEM\n  remote: https://rubygems.org/\n  specs:\n    excon (EXCON)\n    fog-core (2.6.0)\n      excon (~> 1.0)\n\nDEPENDENCIES\n  fog-core\n";
+const COMPOSER_LOCK: &str = r#"{"packages":[{"name":"guzzlehttp/guzzle","version":"7.9.2","require":{"composer/ca-bundle":"^1.4"}},{"name":"composer/ca-bundle","version":"BUNDLE"}]}"#;
+const MIX_LOCK: &str = "%{\n  \"castore\": {:hex, :castore, \"CASTORE\", \"a\", [:mix], [], \"hexpm\", \"b\"},\n  \"mint\": {:hex, :mint, \"1.6.2\", \"a\", [:mix], [{:castore, \"~> 1.0\", [hex: :castore, repo: \"hexpm\", optional: true]}], \"hexpm\", \"b\"},\n}\n";
+const SNAPSHOT: &str = "# carton snapshot format: version 1.0\nDISTRIBUTIONS\n  Mozilla-CA-MOZCA\n    pathname: L/LW/LWP/Mozilla-CA-MOZCA.tar.gz\n    provides:\n      Mozilla::CA MOZCA\n";
+
+fn eco_project(tag: &str, excon: &str, bundle: &str, castore: &str, mozca: &str) -> PathBuf {
+    write_files(tag, &[
+        ("Gemfile.lock", &GEMFILE_LOCK.replace("EXCON", excon)),
+        ("composer.lock", &COMPOSER_LOCK.replace("BUNDLE", bundle)),
+        ("mix.lock", &MIX_LOCK.replace("CASTORE", castore)),
+        ("cpanfile.snapshot", &SNAPSHOT.replace("MOZCA", mozca)),
+    ])
+}
+
+#[test]
+fn tp_ruby_php_hex_perl_bundlers_detected() {
+    let d = eco_project("eco", "1.7.3", "1.4.15", "1.0.21", "20260813");
+    let (code, v) = run(&["--no-resolve", d.to_str().unwrap()]);
+    assert_eq!(code, 1, "{v}");
+    let mut p = packages(&v);
+    p.sort();
+    assert_eq!(p, vec!["Mozilla-CA 20260813", "castore 1.0.21", "composer/ca-bundle 1.4.15", "excon 1.7.3"]);
+}
+
+#[test]
+fn fp_ruby_php_hex_perl_without_bundlers_clean() {
+    let d = write_files("eco-clean", &[
+        ("Gemfile.lock", "GEM\n  remote: https://rubygems.org/\n  specs:\n    rack (3.1.0)\n\nDEPENDENCIES\n  rack\n"),
+        ("composer.lock", r#"{"packages":[{"name":"monolog/monolog","version":"3.7.0"}]}"#),
+        ("mix.lock", "%{\n  \"jason\": {:hex, :jason, \"1.4.4\", \"a\", [:mix], [], \"hexpm\", \"b\"},\n}\n"),
+        ("cpanfile.snapshot", "DISTRIBUTIONS\n  JSON-PP-4.16\n    pathname: I/IS/ISHIGAKI/JSON-PP-4.16.tar.gz\n"),
+    ]);
+    let (code, v) = run(&["--no-resolve", d.to_str().unwrap()]);
+    assert_eq!(code, 0, "{v}");
+}
+
+#[test]
+#[ignore = "network: rubygems, packagist, hex, metacpan; needs ca-bundle-scanner"]
+fn tp_deep_scan_new_registries_affected() {
+    let d = eco_project("eco-deep-old", "1.7.3", "1.4.15", "1.0.21", "20260813");
+    let (code, v) = run(&["--no-resolve", "--deep-scan", "--cache-dir", tmpdir("cache-eco-old").to_str().unwrap(), d.to_str().unwrap()]);
+    assert_eq!(code, 1, "{v}");
+    for f in v["findings"].as_array().unwrap() {
+        assert_eq!(f["bundle"]["affected"], true, "{f}");
+    }
+}
+
+#[test]
+#[ignore = "network: rubygems, packagist, hex, metacpan; needs ca-bundle-scanner"]
+fn fp_deep_scan_new_registries_fixed() {
+    let d = eco_project("eco-deep-new", "1.8.0", "1.4.16", "1.0.22", "20261020");
+    let (code, v) = run(&["--no-resolve", "--deep-scan", "--cache-dir", tmpdir("cache-eco-new").to_str().unwrap(), d.to_str().unwrap()]);
+    assert_eq!(code, 0, "{v}");
+    for f in v["findings"].as_array().unwrap() {
+        assert_eq!(f["bundle"]["affected"], false, "{f}");
+    }
+}
+
+#[test]
+#[ignore = "network: PyPI; needs ca-bundle-scanner"]
+fn tp_fp_deep_scan_botocore() {
+    for (ver, want) in [("1.43.116", true), ("1.43.117", false)] {
+        let d = write_files(&format!("boto-{ver}"), &[("requirements.txt", &format!("botocore=={ver}\n"))]);
+        let (_, v) = run(&["--no-resolve", "--deep-scan", d.to_str().unwrap()]);
+        let f = v["findings"].as_array().unwrap().iter().find(|f| f["package"] == "botocore").cloned().unwrap();
+        assert_eq!(f["bundle"]["affected"], want, "{ver}: {f}");
+    }
+}

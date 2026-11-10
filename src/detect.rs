@@ -5,6 +5,7 @@ use walkdir::WalkDir;
 
 const SKIP_DIRS: &[&str] = &[
     ".git", "node_modules", "target", ".venv", "venv", "__pycache__", "site-packages", ".tox",
+    "vendor", "deps", "_build", "local",
 ];
 
 pub fn ecosystem_for_lockfile(path: &Path) -> Result<Ecosystem> {
@@ -14,6 +15,10 @@ pub fn ecosystem_for_lockfile(path: &Path) -> Result<Ecosystem> {
         "package-lock.json" => Ok(Ecosystem::Node),
         "poetry.lock" | "uv.lock" | "Pipfile.lock" => Ok(Ecosystem::Python),
         "go.mod" => Ok(Ecosystem::Go),
+        "Gemfile.lock" => Ok(Ecosystem::Ruby),
+        "composer.lock" => Ok(Ecosystem::Php),
+        "mix.lock" | "rebar.lock" => Ok(Ecosystem::Hex),
+        "cpanfile.snapshot" => Ok(Ecosystem::Perl),
         n if n.starts_with("requirements") && n.ends_with(".txt") => Ok(Ecosystem::Python),
         _ => bail!("unrecognized lockfile: {}", path.display()),
     }

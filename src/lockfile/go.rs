@@ -41,6 +41,12 @@ fn parse_str(content: &str) -> ParsedLock {
             graph.add_edge(graph.root, idx);
         }
     }
+    // `toolchain go1.x.y` wins over the minimum in `go 1.x`.
+    let directive = |p: &str| content.lines().find_map(|l| l.trim().strip_prefix(p).map(|v| v.trim().trim_start_matches("go").to_string()));
+    if let Some(v) = directive("toolchain ").or_else(|| directive("go ")) {
+        let idx = graph.add_dep(ResolvedDep::new("go", &v, Ecosystem::Go));
+        graph.add_edge(graph.root, idx);
+    }
     ParsedLock { graph, evidence: Evidence::LockfileEntryOnly, notes: vec![] }
 }
 
