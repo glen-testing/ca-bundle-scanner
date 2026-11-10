@@ -99,6 +99,8 @@ const TABLE: &[Entry] = &[
     (Os::Unix, "gcloud SDK certifi (/usr/share)", Base::Abs, "/usr/share/google-cloud-sdk/lib/third_party/certifi/cacert.pem", Trust, 0),
     (Os::Mac, "Python certifi (python.org framework)", Base::Abs, "/Library/Frameworks/Python.framework/Versions/*/lib/python3*/site-packages/certifi/cacert.pem", Trust, 0),
     (Os::Win, "Python certifi (Windows)", Base::Env("LOCALAPPDATA"), "Programs/Python/*/Lib/site-packages/certifi/cacert.pem", Trust, 0),
+    (Os::Win, "Python certifi (Windows, all users)", Base::Env("ProgramFiles"), "Python3*/Lib/site-packages/certifi/cacert.pem", Trust, 0),
+    (Os::Win, "pip vendored certifi (Windows)", Base::Env("LOCALAPPDATA"), "Programs/Python/*/Lib/site-packages/pip/_vendor/certifi/cacert.pem", Trust, 0),
     // Ruby, Node.js, Electron.
     (Os::Unix, "RubyGems bundled certs", Base::Abs, "/usr/lib/ruby/**/rubygems/ssl_certs/**/*.pem", Trust, 0),
     (Os::Unix, "RubyGems bundled certs (/usr/local)", Base::Abs, "/usr/local/lib/ruby/**/rubygems/ssl_certs/**/*.pem", Trust, 0),
@@ -108,6 +110,7 @@ const TABLE: &[Entry] = &[
     (Os::Mac, "Electron apps (Node bundled roots)", Base::Abs, "/Applications/*.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework", Trust, 0),
     (Os::Win, "Node.js binary (Windows)", Base::Env("ProgramFiles"), "nodejs/node.exe", Trust, 0),
     (Os::Win, "VS Code (Electron; Node bundled roots)", Base::Env("LOCALAPPDATA"), "Programs/Microsoft VS Code/Code.exe", Trust, 0),
+    (Os::Win, "VS Code, system install (Electron; Node bundled roots)", Base::Env("ProgramFiles"), "Microsoft VS Code/Code.exe", Trust, 0),
     (Os::Any, "$NODE_EXTRA_CA_CERTS", Base::Env("NODE_EXTRA_CA_CERTS"), "", Trust, 0),
     (Os::Any, "$SSL_CERT_FILE", Base::Env("SSL_CERT_FILE"), "", Trust, 0),
     (Os::Any, "$SSL_CERT_DIR", Base::Env("SSL_CERT_DIR"), "", Trust, 1),
@@ -183,6 +186,29 @@ fn os_matches(entry: Os, os: &str) -> bool {
 /// Built-in system locations for `os`. With `root`, absolute paths are
 /// resolved under it and HOME becomes `<root>/root` plus `<root>/home/*`.
 pub fn system(env: &Env, os: &str, root: Option<&Path>) -> Vec<Location> {
+    let windows = os == "windows";
+    // Windows environment variable names are case-insensitive (`ProgramFiles`
+    // may be stored as `PROGRAMFILES`, `JAVA_HOME` as `Java_Home`).
+    let lookup = |var: &str| -> Option<&String> {
+        if windows {
+            env.get(var).or_else(|| {
+                env.iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(var))
+                    .map(|(_, v)| v)
+            })
+        } else {
+            env.get(var)
+        }
+    };
+    // Table patterns use '/'; on Windows emit native separators so reported
+    // paths are not a mix such as `C:\Program Files/Git/mingw64/...`.
+    let native = |s: &str| -> String {
+        if windows {
+            s.replace('/', "\\")
+        } else {
+            s.to_string()
+        }
+    };
     let mut out: Vec<Location> = Vec::new();
     for &(eos, label, base, rel, context, depth) in TABLE {
         if !os_matches(eos, os) {
@@ -196,7 +222,7 @@ pub fn system(env: &Env, os: &str, root: Option<&Path>) -> Vec<Location> {
                 vec![format!("{r}/root"), format!("{r}/home/*")]
             }
             (Base::Env(_), Some(_)) => vec![],
-            (Base::Env(var), None) => match env.get(var).filter(|v| !v.is_empty()) {
+            (Base::Env(var), None) => match lookup(var).filter(|v| !v.is_empty()) {
                 Some(v) if var == "SSL_CERT_DIR" => {
                     let sep = if os == "windows" { ';' } else { ':' };
                     v.split(sep)
@@ -211,13 +237,14 @@ pub fn system(env: &Env, os: &str, root: Option<&Path>) -> Vec<Location> {
         for b in bases {
             for rel in expand_braces(rel) {
                 let pattern = match base {
-                    Base::Abs => format!("{b}{rel}"),
+                    Base::Abs => native(&format!("{b}{rel}")),
                     // `b` is already escaped (or a deliberate `/home/*` glob).
                     Base::Env(_) => {
                         if rel.is_empty() {
                             b.clone()
                         } else {
-                            format!("{}/{rel}", b.trim_end_matches(['/', '\\']))
+                            let sep = if windows { '\\' } else { '/' };
+                            format!("{}{sep}{}", b.trim_end_matches(['/', '\\']), native(&rel))
                         }
                     }
                 };
@@ -334,6 +361,43 @@ mod tests {
             None,
         );
         assert!(resolved(&linux, "Java cacerts (Windows)").is_empty());
+    }
+
+    #[test]
+    fn windows_patterns_use_native_separators() {
+        let e = env(&[("ProgramFiles", r"C:\Program Files")]);
+        let locs = system(&e, "windows", None);
+        let git = locs
+            .iter()
+            .find(|l| l.label == "Git for Windows CA bundle")
+            .unwrap();
+        assert_eq!(
+            git.pattern,
+            r"C:\Program Files\Git\mingw64\etc\ssl\certs\ca-bundle.crt"
+        );
+        assert!(locs.iter().all(|l| !l.pattern.contains('/')));
+        // FP: Unix patterns keep '/'.
+        let unix = system(&env(&[("HOME", "/home/u")]), "linux", None);
+        let ff = unix
+            .iter()
+            .find(|l| l.label == "Firefox NSS database")
+            .unwrap();
+        assert_eq!(ff.pattern, "/home/u/.mozilla/firefox/*/cert9.db*");
+    }
+
+    #[test]
+    fn windows_env_names_are_case_insensitive() {
+        let e = env(&[("PROGRAMFILES", r"C:\PF"), ("Java_Home", r"C:\jdk")]);
+        let locs = system(&e, "windows", None);
+        assert!(locs.iter().any(|l| l.label == "Git for Windows CA bundle"));
+        assert!(locs
+            .iter()
+            .any(|l| l.pattern == r"C:\jdk\lib\security\cacerts"));
+        // FP: on Unix, names stay case-sensitive.
+        let unix = system(&env(&[("java_home", "/opt/jdk")]), "linux", None);
+        assert!(!unix
+            .iter()
+            .any(|l| l.label.starts_with("Java cacerts ($JAVA_HOME")));
     }
 
     #[test]
