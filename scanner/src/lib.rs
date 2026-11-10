@@ -70,6 +70,7 @@ struct FileResult {
     issues: Vec<Issue>,
     scanned: bool,
     trust: Option<trust::TrustProfile>,
+    onecrl: Vec<String>,
 }
 
 /// Identity of a file across symlinks and duplicate paths.
@@ -179,6 +180,7 @@ fn scan_file(path: &Path, context: Context, profile: &Profile, limits: &Limits) 
     let mut fs = FileScan::new(profile, limits, context, len);
     guarded(&mut fs, &display, |fs| fs.scan(data, &display));
     res.trust = Some(std::mem::take(&mut fs.trust).finish(&display));
+    res.onecrl = std::mem::take(&mut fs.onecrl);
     res.findings = fs.findings;
     res.issues = fs.issues;
     res.scanned = true;
@@ -422,6 +424,14 @@ pub fn run(cfg: &Config, progress: &mut dyn FnMut(&LocationResult)) -> Report {
             errors: walk_errors,
             duplicates,
         };
+        // A OneCRL list in one file of an installed app covers NSS roots in another.
+        let onecrl: Vec<String> = results.iter().flat_map(|r| r.onecrl.clone()).collect();
+        let mut results = results;
+        if !onecrl.is_empty() {
+            for r in &mut results {
+                scan::mitigate_nss_with_onecrl(&mut r.findings, &onecrl);
+            }
+        }
         for r in results {
             lr.files += r.scanned as usize;
             lr.findings += r.findings.len();

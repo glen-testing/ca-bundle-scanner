@@ -67,7 +67,9 @@ hashes of all 8 compromised keys (Chromium's compiled-in blocklist, as in
 patched Electron 42.11.16, 43.8.1, 44.9.1 and later): those chains are rejected,
 so the hits are marked `key-blocklist`. The bare-SPKI form compiled into
 rustls-webpki 0.103.16 and later (`DISTRUSTED_SPKIS`, e.g. Signal's Rust core) counts
-too. A partial list is reported but changes nothing.
+too, as do OneCRL issuer+serial entries for the 6 TLS CAs (Firefox 158.0.1 and later),
+which cover NSS's built-in roots of the same application folder. A partial list is
+reported but changes nothing.
 
 ### Options
 

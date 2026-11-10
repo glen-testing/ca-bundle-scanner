@@ -61,6 +61,8 @@ pub struct FileScan<'a> {
     once: u8,
     pub trust: TrustProfile,
     roots_seen: std::collections::HashSet<[u8; 32]>,
+    /// Components holding a complete OneCRL-style (issuer+serial) blocklist.
+    pub onecrl: Vec<String>,
 }
 
 impl<'a> FileScan<'a> {
@@ -79,6 +81,7 @@ impl<'a> FileScan<'a> {
             once: 0,
             trust: TrustProfile::default(),
             roots_seen: Default::default(),
+            onecrl: Vec::new(),
         }
     }
 
@@ -99,6 +102,8 @@ impl<'a> FileScan<'a> {
 
     pub fn scan(&mut self, data: &[u8], path: &str) {
         self.scan_blob(data, path, 0);
+        let lists = self.onecrl.clone();
+        mitigate_nss_with_onecrl(&mut self.findings, &lists);
     }
 
     fn issue(&mut self, path: &str, severity: Severity, message: String) {
@@ -669,44 +674,51 @@ impl<'a> FileScan<'a> {
         }
     }
 
-    /// A binary that carries the SPKI SHA-256 of every compromised key (Chromium's
-    /// compiled-in blocklist, e.g. patched Electron) rejects those chains, so its root
-    /// and compromised-CA hits stop needing action. A partial list changes nothing.
+    /// A blob that blocks every compromised TLS key (Chromium/Go SPKI-hash list,
+    /// rustls-webpki bare SPKIs, or OneCRL issuer+serial entries) rejects those chains,
+    /// so the same blob's root and compromised-CA hits stop needing action.
     fn apply_key_blocklist(&mut self, data: &[u8], path: &str, from: usize) {
-        let (by_hash, by_der, total) = self
+        let c = self
             .profile
             .blocked_keys(data, |s, e| enclosing_cert(data, s, e).is_none());
-        let blocked = (0..total).filter(|&i| by_hash[i] || by_der[i]).count();
+        let (blocked, total) = (c.count(), c.total());
         if blocked == 0 {
             return;
         }
-        let complete = blocked == total;
+        // TLS-only coverage is accepted from OneCRL (NSS clients do not verify code
+        // signatures); hash and bare-key lists must cover all keys.
+        let mitigates = c.complete() || (c.tls_complete() && c.by_serial.contains(&true));
         let needs_action = self.findings[from..].iter().any(|f| f.action_required);
-        if !complete && !needs_action {
+        if !mitigates && !needs_action {
             return;
         }
-        if complete {
+        if mitigates {
             for f in &mut self.findings[from..] {
-                let chain_kind = matches!(
-                    f.kind,
-                    Kind::DistrustedRoot
-                        | Kind::CrossSignRoot
-                        | Kind::Compromised
-                        | Kind::IssuedByCompromised
-                );
-                if chain_kind && f.action_required {
+                if chain_kind(f.kind) && f.action_required {
                     f.context = Context::KeyBlocklist;
                     f.action_required = false;
                 }
             }
+            if c.by_serial.contains(&true) {
+                self.onecrl.push(path.to_string());
+            }
         }
-        let form = match (by_hash.contains(&true), by_der.contains(&true)) {
-            (true, true) => "SPKI SHA-256 and bare-SPKI distrust lists",
-            (true, false) => "SPKI SHA-256 blocklist",
-            _ => "bare-SPKI distrust list (as in rustls-webpki)",
-        };
-        let cert = if complete {
+        let mut forms = Vec::new();
+        if c.by_hash.contains(&true) {
+            forms.push("SPKI SHA-256");
+        }
+        if c.by_der.contains(&true) {
+            forms.push("bare-SPKI (as in rustls-webpki)");
+        }
+        if c.by_serial.contains(&true) {
+            forms.push("issuer+serial (OneCRL)");
+        }
+        let form = format!("{} blocklist", forms.join(" and "));
+        let cert = if c.complete() {
             format!("{form} covering all {total} compromised keys")
+        } else if mitigates {
+            let tls = c.tls.iter().filter(|&&t| t).count();
+            format!("{form} covering all {tls} TLS keys (the code-signing keys are not listed; matters only for code-signature verification)")
         } else {
             format!("partial {form}: {blocked} of {total} compromised keys (not a mitigation)")
         };
@@ -887,6 +899,92 @@ impl<'a> FileScan<'a> {
                 }
             }
         }
+    }
+}
+
+fn chain_kind(k: Kind) -> bool {
+    matches!(
+        k,
+        Kind::DistrustedRoot | Kind::CrossSignRoot | Kind::Compromised | Kind::IssuedByCompromised
+    )
+}
+
+/// NSS's built-in root module (Firefox, Thunderbird) consults OneCRL.
+const NSS_BUILTINS: &[&str] = &[
+    "libxul.so",
+    "XUL",
+    "xul.dll",
+    "libnssckbi.so",
+    "libnssckbi.dylib",
+    "nssckbi.dll",
+];
+/// Path components of a scan path (archive members are joined with ':').
+fn segments(p: &str) -> Vec<&str> {
+    p.split(['/', '\\', ':'])
+        .filter(|s| !s.is_empty() && *s != ".")
+        .collect()
+}
+
+/// Whether `list` lies inside the application folder of the NSS module at `nss`:
+/// the module's own folder, or `Contents` for a macOS bundle (`Contents/MacOS/XUL`).
+fn same_app_dir(list: &str, nss: &str) -> bool {
+    let (l, n) = (segments(list), segments(nss));
+    let nss_dir = &n[..n.len().saturating_sub(1)];
+    let anchor = match nss_dir.last() {
+        Some(&"MacOS") => &nss_dir[..nss_dir.len() - 1],
+        _ => nss_dir,
+    };
+    !anchor.is_empty() && l.len() > anchor.len() && l.starts_with(anchor)
+}
+
+/// A complete OneCRL list mitigates NSS built-in roots of the same application.
+pub fn mitigate_nss_with_onecrl(findings: &mut [Finding], onecrl: &[String]) {
+    if onecrl.is_empty() {
+        return;
+    }
+    for f in findings
+        .iter_mut()
+        .filter(|f| f.action_required && chain_kind(f.kind))
+    {
+        let file = f.path.rsplit(['/', '\\', ':']).next().unwrap_or(&f.path);
+        if NSS_BUILTINS.contains(&file) && onecrl.iter().any(|l| same_app_dir(l, &f.path)) {
+            f.context = Context::KeyBlocklist;
+            f.action_required = false;
+        }
+    }
+}
+
+#[cfg(test)]
+mod onecrl_scope_tests {
+    use super::same_app_dir;
+
+    #[test]
+    fn tp_firefox_layouts() {
+        assert!(same_app_dir(
+            "ff.tar.xz:firefox/browser/omni.ja:defaults/settings/security-state/onecrl.json",
+            "ff.tar.xz:firefox/libxul.so"
+        ));
+        assert!(same_app_dir(
+            "/Applications/Firefox.app/Contents/Resources/browser/omni.ja:x/onecrl.json",
+            "/Applications/Firefox.app/Contents/MacOS/XUL"
+        ));
+        assert!(same_app_dir(
+            "C:\\Program Files\\Mozilla Firefox\\browser\\omni.ja:x/onecrl.json",
+            "C:\\Program Files\\Mozilla Firefox\\xul.dll"
+        ));
+    }
+
+    #[test]
+    fn fp_neighbouring_apps_and_other_bundles() {
+        assert!(!same_app_dir(
+            "/opt/apps/a/browser/omni.ja:x/onecrl.json",
+            "/opt/apps/b/libxul.so"
+        ));
+        assert!(!same_app_dir(
+            "/Applications/Other.app/Contents/Resources/omni.ja:x",
+            "/Applications/Firefox.app/Contents/MacOS/XUL"
+        ));
+        assert!(!same_app_dir("onecrl.json", "libxul.so"));
     }
 }
 
