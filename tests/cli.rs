@@ -122,9 +122,13 @@ fn fp_requirements_without_bundler() {
 #[test]
 #[ignore = "network: cargo metadata downloads crate manifests"]
 fn tp_cargo_metadata_runtime_path() {
+    // Fixture resolves rustls-webpki 0.103.16, so the reachable webpki-roots is mitigated (exit 0).
     let (code, v) = run(&[fixture("cargo_with_webpki").to_str().unwrap()]);
-    assert_eq!(code, 1, "{v}");
-    assert_eq!(v["findings"][0]["evidence"], "runtime_dependency_path");
+    let f = &v["findings"][0];
+    assert_eq!(f["reachable"], true, "{v}");
+    assert_eq!(f["evidence"], "runtime_dependency_path");
+    assert!(f["mitigated_by"].as_str().is_some_and(|m| m.contains("0.103.16")), "{v}");
+    assert_eq!(code, 0, "{v}");
 }
 
 #[test]
@@ -133,8 +137,9 @@ fn fp_cargo_dev_dependency_not_reported() {
     let dir = fixture("cargo_dev_only");
     let (code, v) = run(&[dir.to_str().unwrap()]);
     assert_eq!(code, 0, "{v}");
-    let (code, _) = run(&["--include-dev", dir.to_str().unwrap()]);
-    assert_eq!(code, 1);
+    assert!(packages(&v).is_empty(), "{v}");
+    let (_, v) = run(&["--include-dev", dir.to_str().unwrap()]);
+    assert_eq!(packages(&v), vec!["webpki-roots 1.0.11"], "{v}");
 }
 
 // ── network: deep scan ──
@@ -200,4 +205,37 @@ fn fp_deep_scan_fixed_webpki_roots_is_clean() {
     assert_eq!(code, 0, "{v}");
     assert_eq!(v["findings"][0]["bundle"]["affected"], false);
     assert_eq!(v["findings"][0]["bundle"]["verdict"], "clean");
+}
+
+// ── rustls-webpki distrust list as a mitigation ──
+
+fn rust_lock(tag: &str, webpki_versions: &[&str]) -> PathBuf {
+    let d = tmpdir(tag);
+    let mut deps = vec!["\"webpki-roots\"".to_string()];
+    let mut pkgs = String::from("[[package]]\nname = \"webpki-roots\"\nversion = \"1.0.7\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n");
+    for v in webpki_versions {
+        deps.push(format!("\"rustls-webpki {v}\""));
+        pkgs.push_str(&format!("[[package]]\nname = \"rustls-webpki\"\nversion = \"{v}\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n"));
+    }
+    let lock = format!("version = 3\n[[package]]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [{}]\n\n{pkgs}", deps.join(", "));
+    std::fs::write(d.join("Cargo.lock"), lock).unwrap();
+    d
+}
+
+#[test]
+fn tp_fixed_rustls_webpki_mitigates_webpki_roots() {
+    let (code, v) = run(&["--no-resolve", rust_lock("wp-fixed", &["0.103.16"]).to_str().unwrap()]);
+    assert_eq!(code, 0, "{v}");
+    let f = &v["findings"][0];
+    assert_eq!(f["reachable"], true);
+    assert!(f["mitigated_by"].as_str().unwrap().contains("0.103.16"), "{f}");
+}
+
+#[test]
+fn fp_unfixed_or_mixed_rustls_webpki_still_flagged() {
+    for (tag, vs) in [("wp-old", vec!["0.103.13"]), ("wp-mixed", vec!["0.101.7", "0.103.16"]), ("wp-none", vec![])] {
+        let (code, v) = run(&["--no-resolve", rust_lock(tag, &vs).to_str().unwrap()]);
+        assert_eq!(code, 1, "{tag}: {v}");
+        assert!(v["findings"][0].get("mitigated_by").is_none(), "{tag}: {v}");
+    }
 }

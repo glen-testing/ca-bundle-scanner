@@ -16,6 +16,9 @@ pub struct Finding {
     pub dep_chain: Option<Vec<String>>,
     pub evidence: Evidence,
     pub notes: Vec<String>,
+    /// Why this bundle cannot complete a chain through the compromised keys, if it can't.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mitigated_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bundle: Option<BundleScan>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,6 +45,7 @@ impl Finding {
             dep_chain,
             evidence,
             notes: bundler.related.iter().filter(|(p, _)| graph.has_dep(p)).map(|(_, n)| n.to_string()).collect(),
+            mitigated_by: None,
             bundle: None,
             deep_scan_error: None,
         }
@@ -75,12 +79,15 @@ fn format_human(out: &RunOutput) -> String {
             Some(c) => s.push_str(&format!("   Reachable: YES ({:?})\n   Chain: {}\n", f.evidence, c.join(" -> "))),
             None => s.push_str("   Reachable: NO (no runtime dependency path from the project root)\n"),
         }
+        if let Some(m) = &f.mitigated_by {
+            s.push_str(&format!("   Mitigated: {m}\n"));
+        }
         for n in &f.notes {
             s.push_str(&format!("   Note: {n}\n"));
         }
         if let Some(b) = &f.bundle {
             if b.affected {
-                s.push_str(&format!("   Bundle: AFFECTED — {}\n", b.affected_certs.join(", ")));
+                s.push_str(&format!("   Bundle: AFFECTED: {}\n", b.affected_certs.join(", ")));
             } else {
                 s.push_str("   Bundle: clean\n");
             }

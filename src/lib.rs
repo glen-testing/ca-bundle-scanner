@@ -146,7 +146,7 @@ impl RunOutput {
         if !self.errors.is_empty() {
             return 2;
         }
-        let hit = self.findings.iter().filter(|f| f.reachable).any(|f| {
+        let hit = self.findings.iter().filter(|f| f.reachable && f.mitigated_by.is_none()).any(|f| {
             !deep_scan || f.bundle.as_ref().is_some_and(|b| b.affected)
         });
         u8::from(hit)
@@ -203,6 +203,7 @@ pub fn run(config: &RunConfig) -> RunOutput {
                 }
                 let dep = parsed.graph.graph[idx].clone();
                 let mut finding = Finding::new(bundler, &dep, path, chain, parsed.evidence, &parsed.graph);
+                finding.mitigated_by = mitigation(bundler, &parsed.graph);
                 if config.deep_scan && reachable {
                     match deep_scan::scan(bundler, &dep, config) {
                         Ok(b) => finding.bundle = Some(b),
@@ -218,6 +219,26 @@ pub fn run(config: &RunConfig) -> RunOutput {
         }
     }
     out
+}
+
+/// Rust root stores are only consulted through rustls-webpki; if every reachable copy
+/// carries the compromised-key distrust list, chains through those keys fail anyway.
+fn mitigation(bundler: &database::CertBundlerEntry, graph: &graph::DepGraph) -> Option<String> {
+    if !matches!(bundler.package, "webpki-roots" | "webpki-root-certs") {
+        return None;
+    }
+    let verifiers: Vec<&ResolvedDep> = graph
+        .find_all("rustls-webpki")
+        .iter()
+        .filter(|&&i| graph.path_to(i).is_some())
+        .map(|&i| &graph.graph[i])
+        .collect();
+    let all_fixed = !verifiers.is_empty()
+        && verifiers.iter().all(|d| database::rustls_webpki_rejects_compromised_keys(&d.version));
+    all_fixed.then(|| {
+        let v: Vec<&str> = verifiers.iter().map(|d| d.version.as_str()).collect();
+        format!("rustls-webpki {} rejects chains through the compromised keys (DISTRUSTED_SPKIS)", v.join(", "))
+    })
 }
 
 pub fn absolute(p: &std::path::Path) -> PathBuf {

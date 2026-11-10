@@ -121,3 +121,32 @@ mod tests {
         }
     }
 }
+
+/// Verifier releases that reject chains through the compromised eMudhra keys even
+/// when a bundled root store still contains emSign ECC Root CA - G3.
+pub fn rustls_webpki_rejects_compromised_keys(version: &str) -> bool {
+    use semver::Version;
+    let Ok(v) = Version::parse(version) else { return false };
+    // DISTRUSTED_SPKIS: 0.103.16+ on the 0.103 line, 0.104.0-alpha.8+ after it.
+    let fixed_103 = v >= Version::new(0, 103, 16) && v < Version::parse("0.104.0-alpha.0").unwrap();
+    fixed_103 || v >= Version::parse("0.104.0-alpha.8").unwrap()
+}
+
+#[cfg(test)]
+mod mitigation_tests {
+    use super::rustls_webpki_rejects_compromised_keys as fixed;
+
+    #[test]
+    fn tp_fixed_releases() {
+        for v in ["0.103.16", "0.103.20", "0.104.0-alpha.8", "0.104.0", "0.105.1"] {
+            assert!(fixed(v), "{v}");
+        }
+    }
+
+    #[test]
+    fn fp_unfixed_releases() {
+        for v in ["0.103.15", "0.103.13", "0.102.8", "0.101.7", "0.104.0-alpha.7", "garbage", ""] {
+            assert!(!fixed(v), "{v}");
+        }
+    }
+}
