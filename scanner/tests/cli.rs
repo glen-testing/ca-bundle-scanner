@@ -1755,11 +1755,9 @@ fn n08_tp_bare_spki_distrust_list_mitigates() {
         .iter()
         .filter(|x| x["type"] == "compromised" || x["type"] == "distrusted-root")
         .all(|x| x["context"] == "key-blocklist" && x["action_required"] == false));
-    assert!(f.iter().any(|x| x["match"] == "blocklist"
-        && x["cert"]
-            .as_str()
-            .unwrap()
-            .contains("bare-SPKI distrust list")));
+    assert!(f
+        .iter()
+        .any(|x| x["match"] == "blocklist" && x["cert"].as_str().unwrap().contains("bare-SPKI")));
 }
 
 #[test]
@@ -1885,4 +1883,78 @@ fn fp_n12_single_cert_or_plain_file_has_no_trust_item() {
         "{}",
         o.stdout
     );
+}
+
+// ── N13: OneCRL issuer+serial lists (Firefox) mitigate NSS roots of the same app ──
+
+const TLS_COMPROMISED: [&str; 6] = [
+    "EM_EV_TLS_CA_G3B_emSign",
+    "EM_OV_TLS_CA_G3B_emSign",
+    "EM_DV_TLS_CA_G3B_emSign",
+    "EM_EV_TLS_CA_G3C_emSign",
+    "EM_OV_TLS_CA_G3C_emSign",
+    "EM_DV_TLS_CA_G3C_emSign",
+];
+
+fn onecrl_json(n: usize) -> String {
+    let recs: Vec<String> = TLS_COMPROMISED
+        .iter()
+        .take(n)
+        .map(|name| {
+            let d = der(name);
+            let (_, c) = x509_parser::parse_x509_certificate(&d).unwrap();
+            format!(
+                r#"{{"enabled":true,"issuerName":"{}","serialNumber":"{}"}}"#,
+                b64(c.issuer().as_raw()),
+                b64(c.raw_serial())
+            )
+        })
+        .collect();
+    format!(r#"{{"data":[{}]}}"#, recs.join(","))
+}
+
+/// libxul.so with the G3 and AAA roots, plus omni.ja carrying a OneCRL dump.
+fn firefox_entries(onecrl: &str) -> Vec<(String, Vec<u8>)> {
+    let mut xul = vec![0x11u8; 4096];
+    xul.extend(der("emSign_ECC_Root_G3"));
+    xul.extend(der("Sectigo_AAA_Certificate_Services"));
+    let omni = zip_of(&[(
+        "defaults/settings/security-state/onecrl.json",
+        onecrl.as_bytes(),
+    )]);
+    vec![
+        ("firefox/libxul.so".into(), xul),
+        ("firefox/browser/omni.ja".into(), omni),
+    ]
+}
+
+#[test]
+fn n13_tp_onecrl_mitigates_firefox_tarball_and_install_dir() {
+    let t = tempfile::tempdir().unwrap();
+    let e = firefox_entries(&onecrl_json(6));
+    let refs: Vec<(&str, &[u8])> = e.iter().map(|(n, b)| (n.as_str(), b.as_slice())).collect();
+    let o = scan(&[&write(t.path(), "firefox.tar", tar_of(&refs))]);
+    assert_eq!(o.code, 0, "{}", o.stdout);
+    assert!(findings(&o)
+        .iter()
+        .any(|x| x["match"] == "blocklist" && x["cert"].as_str().unwrap().contains("6 TLS keys")));
+    // Same layout installed on disk (separate files).
+    for (n, b) in &e {
+        write(&t.path().join("install"), n, b);
+    }
+    let o = scan(&[&t.path().join("install")]);
+    assert_eq!(o.code, 0, "{}", o.stdout);
+}
+
+#[test]
+fn n13_fp_incomplete_onecrl_or_other_app_does_not_mitigate() {
+    let t = tempfile::tempdir().unwrap();
+    let e = firefox_entries(&onecrl_json(5));
+    let refs: Vec<(&str, &[u8])> = e.iter().map(|(n, b)| (n.as_str(), b.as_slice())).collect();
+    assert_found(&scan(&[&write(t.path(), "partial.tar", tar_of(&refs))]));
+    // A complete list in a neighbouring app's folder does not cover this app's roots.
+    let full = firefox_entries(&onecrl_json(6));
+    write(&t.path().join("apps"), "a/libxul.so", &full[0].1);
+    write(&t.path().join("apps"), "b/browser/omni.ja", &full[1].1);
+    assert_found(&scan(&[&t.path().join("apps")]));
 }

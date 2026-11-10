@@ -99,6 +99,63 @@ pub struct Profile {
     /// (both appear in compiled distrust lists); `.1` is the index into `blocked_spki`.
     blocked_spki_der: Vec<(Vec<u8>, usize)>,
     blocked_der_ac: Option<AhoCorasick>,
+    /// Per compromised key: whether it is a TLS (vs code-signing) CA.
+    blocked_tls: Vec<bool>,
+    /// Issuer + serial revocation entries (OneCRL style): base64 serial, issuer index, key index.
+    serial_pats: Vec<(Vec<u8>, usize, usize)>,
+    serial_issuers: Vec<Vec<u8>>,
+    serial_ac: Option<AhoCorasick>,
+}
+
+/// Which compromised keys a blob blocks, per list form.
+#[derive(Debug, Clone)]
+pub struct Coverage {
+    pub by_hash: Vec<bool>,
+    pub by_der: Vec<bool>,
+    /// Issuer + serial entries (OneCRL), for the emSign-issued certificate of the key.
+    pub by_serial: Vec<bool>,
+    /// Whether each key is a TLS CA (the rest sign code).
+    pub tls: Vec<bool>,
+}
+
+impl Coverage {
+    pub fn blocked(&self, i: usize) -> bool {
+        self.by_hash[i] || self.by_der[i] || self.by_serial[i]
+    }
+    pub fn count(&self) -> usize {
+        (0..self.tls.len()).filter(|&i| self.blocked(i)).count()
+    }
+    pub fn total(&self) -> usize {
+        self.tls.len()
+    }
+    /// Every TLS key is blocked (enough for clients that never verify code signatures).
+    pub fn tls_complete(&self) -> bool {
+        self.count() > 0
+            && (0..self.tls.len())
+                .filter(|&i| self.tls[i])
+                .all(|i| self.blocked(i))
+    }
+    pub fn complete(&self) -> bool {
+        self.count() == self.total()
+    }
+}
+
+fn b64(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::with_capacity(data.len().div_ceil(3) * 4);
+    for c in data.chunks(3) {
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            s.push(if i <= c.len() {
+                T[(n >> (18 - 6 * i) & 63) as usize] as char
+            } else {
+                '='
+            });
+        }
+    }
+    s
 }
 
 /// Minimum needle length; shorter keys would risk chance matches.
@@ -131,6 +188,7 @@ impl Profile {
             if !self.blocked_spki.contains(&h) {
                 let idx = self.blocked_spki.len();
                 self.blocked_spki.push(h);
+                self.blocked_tls.push(!cn.contains(" CS "));
                 let hx = hex(&h);
                 for pat in [
                     h.to_vec(),
@@ -152,6 +210,30 @@ impl Profile {
             if let Some(org) = cert.subject().iter_organization().next() {
                 if let Ok(o) = org.as_str() {
                     self.add_keyword(o);
+                }
+            }
+        }
+        if role == Role::Compromised {
+            let h = sha256(cert.public_key().raw);
+            let key = self
+                .blocked_spki
+                .iter()
+                .position(|k| *k == h)
+                .expect("key registered above");
+            let issuer = b64(cert.issuer().as_raw()).into_bytes();
+            let ii = match self.serial_issuers.iter().position(|x| *x == issuer) {
+                Some(i) => i,
+                None => {
+                    self.serial_issuers.push(issuer);
+                    self.serial_issuers.len() - 1
+                }
+            };
+            let raw = cert.raw_serial();
+            let stripped = raw.strip_prefix(&[0u8]).unwrap_or(raw);
+            for form in [raw, stripped] {
+                let p = b64(form).into_bytes();
+                if !self.serial_pats.iter().any(|(x, _, _)| *x == p) {
+                    self.serial_pats.push((p, ii, key));
                 }
             }
         }
@@ -254,34 +336,53 @@ impl Profile {
         self.blocked_ac = (!self.blocked_hash_pats.is_empty()).then(|| {
             AhoCorasick::new(self.blocked_hash_pats.iter().map(|(b, _)| b)).expect("spki hashes")
         });
+        self.serial_ac = (!self.serial_pats.is_empty()).then(|| {
+            AhoCorasick::new(self.serial_pats.iter().map(|(b, _, _)| b)).expect("serials")
+        });
         self.blocked_der_ac = (!self.blocked_spki_der.is_empty()).then(|| {
             AhoCorasick::new(self.blocked_spki_der.iter().map(|(b, _)| b)).expect("spki der")
         });
     }
 
-    /// Compromised keys blocked in `data`: (by SPKI SHA-256, by bare SPKI DER, total keys).
+    /// Which compromised keys `data` blocks, and in which list forms.
     /// `outside_cert` says whether a bare-DER hit at (start, end) lies outside any certificate.
     pub fn blocked_keys(
         &self,
         data: &[u8],
         outside_cert: impl Fn(usize, usize) -> bool,
-    ) -> (Vec<bool>, Vec<bool>, usize) {
+    ) -> Coverage {
         let total = self.blocked_spki.len();
-        let mut by_hash = vec![false; total];
-        let mut by_der = vec![false; total];
+        let mut c = Coverage {
+            by_hash: vec![false; total],
+            by_der: vec![false; total],
+            by_serial: vec![false; total],
+            tls: self.blocked_tls.clone(),
+        };
         if let Some(ac) = &self.blocked_ac {
             for m in ac.find_overlapping_iter(data) {
-                by_hash[self.blocked_hash_pats[m.pattern().as_usize()].1] = true;
+                c.by_hash[self.blocked_hash_pats[m.pattern().as_usize()].1] = true;
             }
         }
         if let Some(ac) = &self.blocked_der_ac {
             for m in ac.find_overlapping_iter(data) {
                 if outside_cert(m.start(), m.end()) {
-                    by_der[self.blocked_spki_der[m.pattern().as_usize()].1] = true;
+                    c.by_der[self.blocked_spki_der[m.pattern().as_usize()].1] = true;
                 }
             }
         }
-        (by_hash, by_der, total)
+        if let Some(ac) = &self.serial_ac {
+            let mut issuer_seen: Vec<Option<bool>> = vec![None; self.serial_issuers.len()];
+            for m in ac.find_iter(data) {
+                let (_, ii, key) = self.serial_pats[m.pattern().as_usize()];
+                let seen = *issuer_seen[ii].get_or_insert_with(|| {
+                    memchr::memmem::find(data, &self.serial_issuers[ii]).is_some()
+                });
+                if seen {
+                    c.by_serial[key] = true;
+                }
+            }
+        }
+        c
     }
 
     pub fn is_empty(&self) -> bool {
@@ -396,7 +497,8 @@ mod tests {
             .count();
         assert_eq!((keys, skis), (12, 8));
         // The 8 compromised keys, each shared by the emSign and Sectigo certificates.
-        assert_eq!(p.blocked_keys(b"", |_, _| true).2, 8);
+        let c = p.blocked_keys(b"", |_, _| true);
+        assert_eq!((c.total(), c.tls.iter().filter(|&&t| t).count()), (8, 6));
     }
 
     #[test]
