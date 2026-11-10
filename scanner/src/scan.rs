@@ -8,7 +8,7 @@ use crate::detect::{self, Container};
 use crate::profile::{authority_key_id, first_cn, subject_key_id, NeedleKind, Profile};
 use crate::report::{action_required, Context, Finding, Issue, Kind, Match, Severity};
 use crate::util::{basename, hex, hex_val, is_source_name, sha256, CLASS, HEX_OR_COLON};
-use crate::{der, pem};
+use crate::{der, literal, pem};
 
 /// Resource limits, applied per top-level file across all nesting levels.
 #[derive(Clone, Debug)]
@@ -520,7 +520,20 @@ impl<'a> FileScan<'a> {
             ranges.push((b.start, b.end));
             let pre = &data[prev_end.min(b.start)..b.start];
             prev_end = b.end;
-            match pem::decode(b.body) {
+            let plain = pem::decode(b.body);
+            // Quoted/commented lines can still "decode" (`+` is base64) into garbage.
+            let commented = if plain.as_ref().is_ok_and(|d| der::cert_span(d).is_some()) {
+                None
+            } else {
+                pem::decode_commented(b.body).filter(|d| der::cert_span(d).is_some())
+            };
+            if let Some(bytes) = commented {
+                let label = String::from_utf8_lossy(b.label);
+                let source = format!("PEM {label} (comment or string)");
+                self.scan_der_bytes(&bytes, path, &source, None);
+                continue;
+            }
+            match plain {
                 Ok(bytes) => {
                     let mut source = format!("PEM {}", String::from_utf8_lossy(b.label));
                     let mut ctx = None;
@@ -568,8 +581,20 @@ impl<'a> FileScan<'a> {
             self.scan_blob(&dec, &format!("{path}@base64:{off}"), depth + 1);
         }
 
-        // References are informational; only look for them in text.
         if !data[..data.len().min(8192)].contains(&0) {
+            // Keys and certificates compiled in as byte literals (webpki-roots, C/Go tables).
+            let mut blobs = literal::escaped_strings(data);
+            blobs.extend(literal::numeric_arrays(data));
+            for (off, bytes) in blobs {
+                if bytes.len() as u64 > self.decompressed_left {
+                    self.budget_exhausted(path);
+                    break;
+                }
+                self.decompressed_left -= bytes.len() as u64;
+                let p = format!("{path}@literal:{off}");
+                self.scan_der_bytes(&bytes, &p, "byte literal in source", None);
+            }
+            // References are informational; only look for them in text.
             self.scan_hex_refs(data, path);
         }
         if is_source_name(basename(path)) {
@@ -740,11 +765,10 @@ impl<'a> FileScan<'a> {
                 if let Some(t) = profile.lookup(&fp) {
                     // Bundle comments ("# SHA256 Fingerprint: ...") next to the cert itself.
                     let hexfp = hex(&fp);
-                    if self
-                        .findings
-                        .iter()
-                        .any(|f| f.path == path && f.sha256.as_deref() == Some(&hexfp))
-                    {
+                    if self.findings.iter().any(|f| {
+                        (f.path == path || f.path.starts_with(&format!("{path}@")))
+                            && f.sha256.as_deref() == Some(&hexfp)
+                    }) {
                         continue;
                     }
                     let cert = format!("fingerprint of {}", t.name);

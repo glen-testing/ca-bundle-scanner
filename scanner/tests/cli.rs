@@ -1337,3 +1337,154 @@ fn n04_fingerprint_comment_next_to_cert_not_duplicated() {
     assert_eq!(findings(&o).len(), 1, "{:#?}", findings(&o));
     assert_eq!(findings(&o)[0]["match"], "certificate");
 }
+
+// ── N05: keys and certificates compiled in as source literals ───────────
+
+fn esc(b: &[u8]) -> String {
+    b.iter().map(|x| format!("\\x{x:02x}")).collect()
+}
+/// SubjectPublicKeyInfo contents without the outer SEQUENCE header, as webpki-roots stores it.
+fn spki_contents(der: &[u8]) -> Vec<u8> {
+    let (_, c) = x509_parser::parse_x509_certificate(der).unwrap();
+    let raw = c.public_key().raw;
+    let hdr = if raw[1] < 0x80 {
+        2
+    } else {
+        2 + (raw[1] & 0x7f) as usize
+    };
+    raw[hdr..].to_vec()
+}
+fn pem_lines(der: &[u8]) -> Vec<String> {
+    pem(der, "CERTIFICATE")
+        .lines()
+        .filter(|l| !l.starts_with("-----"))
+        .map(String::from)
+        .collect()
+}
+
+#[test]
+fn n05_tp_certificate_as_rust_byte_string() {
+    let t = tempfile::tempdir().unwrap();
+    let src = format!(
+        "pub const ROOTS: &[CertificateDer<'static>] = &[\n  // \"emSign ECC Root CA - G3\"\n  CertificateDer::from_slice(b\"{}\"),\n];\n",
+        esc(&der("emSign_ECC_Root_G3"))
+    );
+    let o = scan(&[&write(t.path(), "lib.rs", src)]);
+    assert_found(&o);
+    assert!(action(&o)
+        .iter()
+        .any(|f| f["type"] == "distrusted-root" && f["match"] == "certificate"));
+}
+
+#[test]
+fn n05_tp_trust_anchor_public_key_literal() {
+    let t = tempfile::tempdir().unwrap();
+    // webpki-roots style: printable bytes appear literally, the rest as escapes.
+    let spki: String = spki_contents(&der("emSign_ECC_Root_G3"))
+        .iter()
+        .map(|&b| match b {
+            b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' => (b as char).to_string(),
+            b'\t' => "\\t".into(),
+            b'\r' => "\\r".into(),
+            _ => format!("\\x{b:02x}"),
+        })
+        .collect();
+    let src = format!(
+        "TrustAnchor {{\n    subject: Der::from_slice(b\"1\\x0b0\\t\"),\n    subject_public_key_info: Der::from_slice(b\"{spki}\"),\n    name_constraints: None\n}},\n"
+    );
+    let o = scan(&[&write(t.path(), "lib.rs", src)]);
+    assert_found(&o);
+    assert!(action(&o)
+        .iter()
+        .any(|f| f["type"] == "distrusted-root" && f["match"] == "public-key"));
+}
+
+#[test]
+fn n05_tp_numeric_arrays_c_and_java() {
+    let t = tempfile::tempdir().unwrap();
+    let d = der("emSign_ECC_Root_G3");
+    let c = d
+        .iter()
+        .map(|x| format!("0x{x:02x}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let java = d
+        .iter()
+        .map(|&x| format!("(byte) {}", x as i8))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let a = write(
+        t.path(),
+        "roots.c",
+        format!("static const unsigned char g3[] = {{ {c} }};\n"),
+    );
+    let b = write(
+        t.path(),
+        "Roots.java",
+        format!("static final byte[] G3 = {{ {java} }};\n"),
+    );
+    for p in [a, b] {
+        assert_found(&scan(&[&p]));
+    }
+}
+
+#[test]
+fn n05_tp_pem_in_comments_and_string_concatenation() {
+    let t = tempfile::tempdir().unwrap();
+    let lines = pem_lines(&der("emSign_ECC_Root_G3"));
+    let comment = format!(
+        "/*\n * -----BEGIN CERTIFICATE-----\n{}\n * -----END CERTIFICATE-----\n */\n",
+        lines
+            .iter()
+            .map(|l| format!(" * {l}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    let js = format!(
+        "module.exports = \"-----BEGIN CERTIFICATE-----\\n\" +\n{}\n  \"-----END CERTIFICATE-----\\n\";\n",
+        lines.iter().map(|l| format!("  \"{l}\\n\" +")).collect::<Vec<_>>().join("\n")
+    );
+    for (name, body) in [("lib.rs", comment), ("roots.pem", js)] {
+        let o = scan(&[&write(t.path(), name, body)]);
+        assert_found(&o);
+    }
+}
+
+#[test]
+fn n05_fp_baseline_root_literal_is_informational() {
+    let t = tempfile::tempdir().unwrap();
+    let src = format!("const G1: &[u8] = b\"{}\";\n", esc(&der("emSign_Root_G1")));
+    let o = scan(&[&write(t.path(), "lib.rs", src)]);
+    assert_eq!(o.code, 0, "{}", o.stdout);
+    assert!(action(&o).is_empty());
+    assert!(findings(&o).iter().any(|f| f["type"] == "info-root"));
+}
+
+#[test]
+fn n05_fp_unrelated_certificate_and_name_only() {
+    let t = tempfile::tempdir().unwrap();
+    let d = clean_der();
+    let lit = write(
+        t.path(),
+        "lib.rs",
+        format!("const C: &[u8] = b\"{}\";\n", esc(&d)),
+    );
+    let arr = write(
+        t.path(),
+        "c.c",
+        format!(
+            "unsigned char c[] = {{ {} }};\n",
+            d.iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    );
+    for p in [lit, arr] {
+        let o = scan(&[&p]);
+        assert_eq!(o.code, 0, "{}", o.stdout);
+        assert!(findings(&o).is_empty(), "{}", o.stdout);
+    }
+    let o = scan(&[&write(t.path(), "names.rs", "// emSign ECC Root CA - G3\n")]);
+    assert!(action(&o).is_empty());
+}

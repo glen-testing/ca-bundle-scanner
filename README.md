@@ -97,7 +97,10 @@ trust flags that exclude TLS and code signing are reported as informational.
 PEM (any label, including `TRUSTED CERTIFICATE` and `X509 CERTIFICATE`, CRLF,
 JSON `\n` escapes; one bad block never hides the others), raw DER, PKCS#7,
 PKCS#12 (plaintext bags), Java KeyStore, NSS `cert9.db` (and its `-wal`), macOS
-keychains, base64 runs (e.g. kubeconfig `certificate-authority-data`), and
+keychains, base64 runs (e.g. kubeconfig `certificate-authority-data`), PEM in
+source comments or concatenated strings, byte literals in source (`b"\x30.."`,
+`0x30, 0x82` arrays, decimal and Java signed-byte arrays, as used by
+webpki-roots and webpki-root-certs), and
 binaries (PEM strings and DER bytes regardless of architecture). Archives are
 unpacked recursively, up to 5 levels: ZIP/JAR/WAR/APK (including executable
 JARs with a script prefix), gzip (multi-member), xz, zstd, tar, ar/`.deb`,

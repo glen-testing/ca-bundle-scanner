@@ -121,6 +121,36 @@ pub fn decode(body: &[u8]) -> Result<Vec<u8>, DecodeError> {
     Ok(out)
 }
 
+/// Decode a body whose lines carry comment markers or string quoting
+/// (` * MIIB...`, `// MIIB...`, `# MIIB...`, `"MIIB...\n" +`): the longest base64
+/// run of each line is kept. For blocks that fail plain `decode`.
+pub fn decode_commented(body: &[u8]) -> Option<Vec<u8>> {
+    let mut joined = Vec::with_capacity(body.len());
+    for line in body.split(|&c| c == b'\n') {
+        let mut s = line.trim_ascii();
+        loop {
+            let before = s.len();
+            for p in [&b"//"[..], b"#", b"*", b";", b"--", b"\"", b"'"] {
+                if let Some(r) = s.strip_prefix(p) {
+                    s = r.trim_ascii_start();
+                }
+            }
+            if s.len() == before {
+                break;
+            }
+        }
+        let best = s
+            .split(|&c| b64_val(c).is_none() && c != b'=')
+            .max_by_key(|r| r.len())
+            .unwrap_or_default();
+        if best.len() >= 4 {
+            joined.extend_from_slice(best);
+            joined.push(b'\n');
+        }
+    }
+    decode(&joined).ok().filter(|d| !d.is_empty())
+}
+
 /// A body that is mostly base64 (as opposed to a PEM marker inside program text).
 pub fn looks_like_pem_body(body: &[u8]) -> bool {
     let chars = body.iter().filter(|c| !c.is_ascii_whitespace()).count();
@@ -211,5 +241,41 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].1, b"AAAAAAAAAAAA");
         assert!(base64_runs(data, 10, &[(0, data.len())]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod commented_tests {
+    use super::*;
+
+    const LINES: [&str; 2] = [
+        "MIIBszCCAVmgAwIBAgIUSmFHoP5Z9mFuZ7KaDb2cC0a2V3wwCgYIKoZIzj0EAwIw",
+        "Ag==",
+    ];
+
+    #[test]
+    fn tp_comment_and_string_prefixes_stripped() {
+        let want = decode(format!("{}\n{}", LINES[0], LINES[1]).as_bytes()).unwrap();
+        for (pre, post) in [
+            (" * ", ""),
+            ("// ", ""),
+            ("# ", ""),
+            ("  \"", "\\n\" +"),
+            ("'", "',"),
+        ] {
+            let body = format!("\n{pre}{}{post}\n{pre}{}{post}\n", LINES[0], LINES[1]);
+            assert_eq!(
+                decode_commented(body.as_bytes()).as_deref(),
+                Some(&want[..]),
+                "{pre:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn fp_prose_and_empty_bodies() {
+        assert_eq!(decode_commented(b"\n * \n */\n"), None);
+        assert!(decode_commented(b"\nsee the README for details\n")
+            .is_none_or(|d| crate::der::cert_span(&d).is_none()));
     }
 }
