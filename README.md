@@ -109,13 +109,15 @@ source comments or concatenated strings, byte literals in source (`b"\x30.."`,
 webpki-roots and webpki-root-certs), and
 binaries (PEM strings and DER bytes regardless of architecture). Archives are
 unpacked recursively, up to 5 levels: ZIP/JAR/WAR/APK (including executable
-JARs with a script prefix), gzip (multi-member), xz, zstd, tar, ar/`.deb`,
-RPM (cpio payload) and Electron `.asar`. bzip2 is reported as not inspected.
-Formats whose payload is not unpacked (SquashFS images such as AppImage and
-snap, NSIS and Inno Setup installers, DMG, MSI, UPX-packed binaries) get a
-raw-bytes scan; if that finds nothing the file is reported as not inspected
-(exit 3), never as clean. Extract them (`--appimage-extract`, `unsquashfs`,
-`7z x`, `innoextract`, or mount the DMG) or scan the installed app folder.
+JARs with a script prefix), gzip (multi-member), bzip2 (`.bz2`, `.bz`,
+`.tbz`, `.tbz2`, multi-stream, and bzip2-compressed ZIP entries), xz, zstd,
+tar, ar/`.deb`, RPM (cpio payload) and Electron `.asar`. Formats are detected
+by content, not file name. Formats whose payload is not unpacked (SquashFS
+images such as AppImage and snap, NSIS and Inno Setup installers, DMG, MSI,
+UPX-packed binaries) get a raw-bytes scan; if that finds nothing the file is
+reported as not inspected (exit 3), never as clean. Extract them
+(`--appimage-extract`, `unsquashfs`, `7z x`, `innoextract`, or mount the DMG)
+or scan the installed app folder.
 
 Limits per top-level file: 2 GiB of decompressed output (enough for a whole
 Electron app archive), 100,000 archive

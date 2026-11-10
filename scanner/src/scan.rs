@@ -168,10 +168,14 @@ impl<'a> FileScan<'a> {
                 self.scan_blob(&out, path, depth + 1);
             }
             Some(Container::Bzip2) => {
-                self.error(
+                // Multi-stream: pbzip2/lbzip2 output and `cat a.bz2 b.bz2` are concatenated streams.
+                let out = self.decompress(
+                    &mut bzip2::read::MultiBzDecoder::new(data),
+                    0,
                     path,
-                    "bzip2 compression is not supported; contents not scanned".into(),
+                    "bzip2",
                 );
+                self.scan_blob(&out, path, depth + 1);
             }
             Some(Container::Tar) => self.scan_tar(data, path, depth),
             Some(Container::Ar) => self.scan_ar(data, path, depth),
@@ -909,6 +913,38 @@ mod tests {
         assert!(issues
             .iter()
             .any(|i| i.severity == Severity::Error && i.message.contains("budget")));
+    }
+
+    fn bz(data: &[u8]) -> Vec<u8> {
+        let mut e = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::fast());
+        e.write_all(data).unwrap();
+        e.finish().unwrap()
+    }
+
+    #[test]
+    fn n09_tp_bzip2_bomb_is_limited_and_partial_output_scanned() {
+        let p = Profile::emudhra().unwrap();
+        let limits = Limits {
+            max_decompressed: 1 << 20,
+            ..Limits::default()
+        };
+        let mut plain = TARGET.to_vec();
+        plain.extend(vec![0u8; 8 << 20]);
+        let (found, issues) = run(&p, &limits, &bz(&bz(&plain)));
+        assert_eq!(found, 1, "target in the first MiB must still be found");
+        assert!(issues
+            .iter()
+            .any(|i| i.severity == Severity::Error && i.message.contains("budget")));
+    }
+
+    #[test]
+    fn n09_fp_bzip2_under_budget_no_error() {
+        let p = Profile::emudhra().unwrap();
+        let mut plain = b"no certificates here\n".to_vec();
+        plain.extend(vec![0u8; 1 << 20]);
+        let (found, issues) = run(&p, &Limits::default(), &bz(&plain));
+        assert_eq!(found, 0);
+        assert!(issues.is_empty(), "{issues:?}");
     }
 
     #[test]

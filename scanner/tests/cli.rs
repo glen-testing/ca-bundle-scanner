@@ -1222,6 +1222,73 @@ fn archives_fp_xz_zstd_nested_clean() {
     assert_clean(&scan(&[&a, &b, &c]));
 }
 
+// ── N09: bzip2 (.bz2, .bz, .tbz, .tbz2, multi-stream, ZIP method 12) ────
+
+fn bzip2_of(bytes: &[u8]) -> Vec<u8> {
+    let mut e = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::fast());
+    e.write_all(bytes).unwrap();
+    e.finish().unwrap()
+}
+fn zip_bzip2_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Bzip2);
+    for (n, b) in entries {
+        w.start_file(*n, opts).unwrap();
+        w.write_all(b).unwrap();
+    }
+    w.finish().unwrap().into_inner()
+}
+/// The same tar under every bzip2 spelling, a two-stream file whose second
+/// stream holds `pem` (pbzip2 / `cat a.bz2 b.bz2`), and a ZIP with bzip2 entries.
+fn bzip2_variants(pem: &str) -> Vec<(&'static str, Vec<u8>)> {
+    let tar = tar_of(&[("etc/ssl/ca.pem", pem.as_bytes())]);
+    let mut multi = bzip2_of(clean_pem().as_bytes());
+    multi.extend(bzip2_of(pem.as_bytes()));
+    vec![
+        ("a.tar.bz2", bzip2_of(&tar)),
+        ("a.tbz2", bzip2_of(&tar)),
+        ("a.tbz", bzip2_of(&tar)),
+        ("ca.pem.bz", bzip2_of(pem.as_bytes())),
+        ("multi.pem.bz2", multi),
+        ("a.zip", zip_bzip2_of(&[("ca.pem", pem.as_bytes())])),
+    ]
+}
+
+#[test]
+fn n09_tp_bzip2_every_form() {
+    let t = tempfile::tempdir().unwrap();
+    for (n, b) in bzip2_variants(&target_pem()) {
+        let o = scan(&[&write(t.path(), n, b)]);
+        assert_found(&o);
+        assert!(has_sha(&o, TARGET_SHA), "{n}");
+        assert!(errors(&o).is_empty(), "{n}: {:?}", errors(&o));
+    }
+}
+
+#[test]
+fn n09_fp_bzip2_every_form_clean() {
+    let t = tempfile::tempdir().unwrap();
+    let paths: Vec<PathBuf> = bzip2_variants(&clean_pem())
+        .into_iter()
+        .map(|(n, b)| write(t.path(), n, b))
+        .collect();
+    let refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+    assert_clean(&scan(&refs));
+}
+
+#[test]
+fn n09_truncated_bzip2_is_incomplete_not_clean() {
+    let t = tempfile::tempdir().unwrap();
+    let mut b = bzip2_of(&tar_of(&[("etc/ssl/ca.pem", clean_pem().as_bytes())]));
+    b.truncate(b.len() / 2);
+    let o = scan(&[&write(t.path(), "cut.tar.bz2", b)]);
+    assert_eq!(o.code, 3, "stdout: {}", o.stdout);
+    assert!(errors(&o)
+        .iter()
+        .any(|e| e["message"].as_str().unwrap_or("").contains("bzip2")));
+}
+
 // ── P04: memory-mapped large files ───────────────────────────────────────
 
 #[test]
