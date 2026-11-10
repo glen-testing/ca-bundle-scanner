@@ -62,6 +62,12 @@ Where a certificate sits matters. Copies in distrust lists (p11-kit blocklists,
 `Disallowed`), in source directories that are not active trust
 (`/usr/share/ca-certificates`, `/usr/share/pki/ca-trust-source`), or with
 trust flags that exclude TLS and code signing are reported as informational.
+The same applies to roots inside a binary that also carries the SPKI SHA-256
+hashes of all 8 compromised keys (Chromium's compiled-in blocklist, as in
+patched Electron 42.11.16, 43.8.1, 44.9.1 and later): those chains are rejected,
+so the hits are marked `key-blocklist`. The bare-SPKI form compiled into
+rustls-webpki 0.103.16 and later (`DISTRUSTED_SPKIS`, e.g. Signal's Rust core) counts
+too. A partial list is reported but changes nothing.
 
 ### Options
 
@@ -106,10 +112,15 @@ unpacked recursively, up to 5 levels: ZIP/JAR/WAR/APK (including executable
 JARs with a script prefix), gzip (multi-member), bzip2 (`.bz2`, `.bz`,
 `.tbz`, `.tbz2`, multi-stream, and bzip2-compressed ZIP entries), xz, zstd,
 tar, ar/`.deb`, RPM (cpio payload) and Electron `.asar`. Formats are detected
-by content, not file name. DMG, MSI and UPX-packed files get a raw-bytes scan
-plus a warning.
+by content, not file name. Formats whose payload is not unpacked (SquashFS
+images such as AppImage and snap, NSIS and Inno Setup installers, DMG, MSI,
+UPX-packed binaries) get a raw-bytes scan; if that finds nothing the file is
+reported as not inspected (exit 3), never as clean. Extract them
+(`--appimage-extract`, `unsquashfs`, `7z x`, `innoextract`, or mount the DMG)
+or scan the installed app folder.
 
-Limits per top-level file: 512 MiB of decompressed output, 100,000 archive
+Limits per top-level file: 2 GiB of decompressed output (enough for a whole
+Electron app archive), 100,000 archive
 entries, 4 GiB file size. Reaching a limit is reported as an error (exit 3
 when nothing else was found), and the part already decompressed is scanned.
 
