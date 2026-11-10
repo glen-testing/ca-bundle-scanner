@@ -883,7 +883,26 @@ fn c18_tp_hostile_file_names_roundtrip() {
     );
     let o = scan(&[&z]);
     assert!(o.json.is_object());
-    assert_eq!(o.json.as_object().unwrap().len(), 8);
+    let mut keys: Vec<&str> = o
+        .json
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort();
+    let want = [
+        "exit_code",
+        "files_scanned",
+        "findings",
+        "issues",
+        "items",
+        "locations",
+        "profile",
+        "schema",
+        "verdict",
+    ];
+    assert_eq!(keys, want, "a file name must not inject top-level keys");
 }
 
 #[test]
@@ -1757,6 +1776,112 @@ fn n08_fp_partial_list_or_full_certificates_still_need_action() {
     assert_found(&o);
     assert!(
         !findings(&o).iter().any(|x| x["match"] == "blocklist"),
+        "{}",
+        o.stdout
+    );
+}
+
+#[test]
+fn n10_tp_inner_spki_distrust_list_mitigates() {
+    // Deno and pixi builds keep the keys as SPKI contents without the outer SEQUENCE header.
+    let t = tempfile::tempdir().unwrap();
+    let mut b = vec![0x66u8; 4096];
+    b.extend(der("emSign_ECC_Root_G3"));
+    for name in COMPROMISED {
+        b.extend(spki_contents(&der(name)));
+        b.extend(vec![0u8; 8]);
+    }
+    let o = scan(&[&write(t.path(), "deno", b)]);
+    assert_eq!(o.code, 0, "{}", o.stdout);
+    assert!(findings(&o).iter().any(|x| x["match"] == "blocklist"));
+}
+
+#[test]
+fn n11_tp_hex_text_spki_hashes_mitigate() {
+    // Go 1.26.10+ keeps the hashes as hex strings in crypto/x509's distrustedSPKIHashes map.
+    let t = tempfile::tempdir().unwrap();
+    let mut b = vec![0x77u8; 2048];
+    b.extend(der("emSign_ECC_Root_G3"));
+    for name in COMPROMISED {
+        let h: String = spki_sha256(&der(name))
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        b.extend(h.into_bytes());
+    }
+    let o = scan(&[&write(t.path(), "gobinary", b)]);
+    assert_eq!(o.code, 0, "{}", o.stdout);
+    assert!(findings(&o).iter().any(|x| x["match"] == "blocklist"));
+}
+
+// ── N12: trust model per item (bundled / OS store / both, pinning, blocklist) ──
+
+fn item(o: &Out) -> Value {
+    o.json["items"]
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+#[test]
+fn n12_tp_bundle_os_store_both_pinning_blocklist() {
+    let t = tempfile::tempdir().unwrap();
+    let roots: String = ["emSign_Root_G1", "emSign_Root_C1", "emSign_ECC_Root_C3"]
+        .iter()
+        .map(|n| pem(&der(n), "CERTIFICATE"))
+        .collect();
+    let o = scan(&[&write(t.path(), "cacert.pem", &roots)]);
+    let i = item(&o);
+    assert_eq!(i["model"], "bundled", "{}", o.stdout);
+    assert_eq!(i["bundled_roots"], 3);
+
+    let mut both = roots.clone().into_bytes();
+    both.extend_from_slice(b"\0/etc/ssl/certs/ca-certificates.crt\0SecTrustEvaluateWithError\0");
+    assert_eq!(
+        item(&scan(&[&write(t.path(), "both.bin", both)]))["model"],
+        "both"
+    );
+
+    let os = scan(&[&write(
+        t.path(),
+        "client",
+        b"\x7fELF....SSL_CTX_set_default_verify_paths....",
+    )]);
+    assert_eq!(item(&os)["model"], "os-store");
+
+    let pin = format!("okhttp3.CertificatePinner sha256/{}=", "Q".repeat(43));
+    let p = item(&scan(&[&write(t.path(), "pinned.dex", pin)]));
+    assert_eq!(p["pinning"].as_array().unwrap().len(), 2, "{p}");
+
+    let b = item(&scan(&[&write(t.path(), "electron", electron_like(8))]));
+    assert!(
+        b["blocklist"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x.as_str().unwrap().contains("all 8")),
+        "{b}"
+    );
+}
+
+#[test]
+fn fp_n12_single_cert_or_plain_file_has_no_trust_item() {
+    let t = tempfile::tempdir().unwrap();
+    // One leaf certificate, and ordinary text, are not trust stores or verifiers.
+    let o = scan(&[&write(t.path(), "leaf.pem", clean_pem())]);
+    assert!(
+        o.json["items"].as_array().unwrap().is_empty(),
+        "{}",
+        o.stdout
+    );
+    let o = scan(&[&write(
+        t.path(),
+        "notes.txt",
+        "see /etc/ssl/ for certs; sha256/short=",
+    )]);
+    assert!(
+        o.json["items"].as_array().unwrap().is_empty(),
         "{}",
         o.stdout
     );

@@ -89,6 +89,22 @@ too. A partial list is reported but changes nothing.
       -j, --json                 one JSON document on stdout (schema 2)
       -h, --help / -V, --version
 
+### Trust model per item
+
+Each scanned item that shows any trust signal is listed in a `TRUST MODEL`
+section (text) and in `items` (JSON):
+
+| Field | Meaning | Evidence used |
+|---|---|---|
+| `model: bundled` | ships its own CA store | 2 or more distinct self-signed CA certificates, or a known root's key as a trust anchor (webpki-roots style) |
+| `model: os-store` | uses the operating system's trust store | OS bundle paths (`/etc/ssl/certs/...`, `/etc/pki/tls/...`, `/etc/ssl/cert.pem`), `SSL_CERT_FILE`/`SSL_CERT_DIR`, OpenSSL default verify paths, Windows `CertGetCertificateChain`, macOS `SecTrustEvaluate`, Go system roots, rustls-native-certs / rustls-platform-verifier, Python `load_default_certs` / truststore, Node.js system-CA options, Java `Windows-ROOT` / `KeychainStore`, Android `AndroidCAStore` |
+| `model: both` | a bundled store plus OS-store code (merged, or one as fallback) | both of the above |
+| `pinning` | pins keys or installs a custom verifier | OkHttp `CertificatePinner` and `sha256/` pins, `pin-sha256`, Android `<pin digest=`, TrustKit, Alamofire evaluators, urllib3 `assert_fingerprint`, Electron `setCertificateVerifyProc`, .NET validation callbacks |
+| `blocklist` | carries a blocklist | the compromised-key blocklist (complete or partial), JDK `blocked.certs`, p11-kit `x-distrusted`, distrust locations |
+
+These are signals of capability found in the bytes, not proof of which path a
+given connection takes. A CA bundle file scanned directly shows as `bundled`.
+
 ### Exit codes
 
 | Code | Meaning |
