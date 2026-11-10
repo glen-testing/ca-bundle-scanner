@@ -4,6 +4,7 @@
 pub mod builtin;
 pub mod der;
 pub mod detect;
+pub mod literal;
 pub mod locations;
 pub mod pem;
 pub mod profile;
