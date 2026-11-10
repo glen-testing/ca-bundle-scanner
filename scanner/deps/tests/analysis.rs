@@ -99,10 +99,7 @@ fn tp_nested_requirements_found() {
     let (code, v) = run(&["--no-resolve", d.to_str().unwrap()]);
     assert_eq!(code, 1);
     assert_eq!(packages(&v), vec!["certifi 2024.8.30"]);
-    assert!(v["findings"][0]["lockfile"]
-        .as_str()
-        .unwrap()
-        .starts_with('/'));
+    assert!(Path::new(v["findings"][0]["lockfile"].as_str().unwrap()).is_absolute());
 }
 
 #[test]

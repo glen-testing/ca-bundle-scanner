@@ -334,7 +334,8 @@ class Wording(unittest.TestCase):
 
 CI_PATH = HERE.parent / ".github" / "workflows" / "ci.yml"
 CI_REQUIRED = (
-    "cargo fmt --check", "cargo clippy --release --all-targets -- -D warnings", "cargo test --release",
+    "cargo fmt --all --check", "cargo clippy --release --workspace --all-targets -- -D warnings",
+    "cargo test --release --workspace",
     "working-directory: scanner", "tools/validate_data.py", "tools/build_site.py --check",
     "python3 -m unittest discover -s tools", "lycheeverse/lychee-action",
 )
@@ -351,8 +352,8 @@ class ContinuousIntegration(unittest.TestCase):
         self.assertEqual(ci_missing(CI_PATH.read_text(encoding="utf-8")), [])
 
     def test_fp_stripped_workflow_detected(self):
-        text = CI_PATH.read_text(encoding="utf-8").replace("cargo test --release", "")
-        self.assertEqual(ci_missing(text), ["cargo test --release"])
+        text = CI_PATH.read_text(encoding="utf-8").replace("cargo test --release --workspace", "")
+        self.assertEqual(ci_missing(text), ["cargo test --release --workspace"])
 
 
 def layout_problems(css):
