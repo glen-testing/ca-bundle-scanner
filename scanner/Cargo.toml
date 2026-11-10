@@ -1,6 +1,6 @@
 [package]
 name = "ca-bundle-scanner"
-version = "0.4.0"
+version = "0.5.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Find compromised or distrusted CA certificates in trust stores, bundles, binaries and archives"
@@ -15,6 +15,8 @@ path = "src/main.rs"
 
 [dependencies]
 aho-corasick = "1"
+# Default backend is libbz2-rs-sys (pure Rust): no C build, still static on musl.
+bzip2 = "0.6"
 clap = { version = "4.6", features = ["derive"] }
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 glob = "0.3"
@@ -29,7 +31,7 @@ tar = { version = "0.4", default-features = false }
 thiserror = "2"
 walkdir = "2"
 x509-parser = "0.18"
-zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64", "bzip2"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }

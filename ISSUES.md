@@ -11,10 +11,10 @@ does not flag the benign counterpart. Scanner tests live in
 `scanner/tests/cli.rs` (end-to-end) and in `#[cfg(test)]` modules under
 `scanner/src/`; data/site tests in `tools/test_data.py` and `tools/test_site.py`.
 
-Last full run (2026-11-02): scanner 93/93 (`cargo test --release`), data/site
-62/62 (`python3 -m unittest discover -s tools`), `cargo fmt --check` clean,
-`cargo clippy --all-targets -D warnings` clean for Linux and for
-`x86_64-pc-windows-gnu`.
+Last full run (2026-11-10, macOS arm64): scanner 122/122 (`cargo test --release`),
+data/site 62/62 (`python3 -m unittest discover -s tools`), `cargo fmt --check`
+clean, `cargo clippy --release --all-targets -D warnings` clean. Linux, Windows
+and macOS runs are in CI (`.github/workflows/ci.yml`).
 
 Glossary: CA = Certificate Authority; DER = Distinguished Encoding Rules
 (binary certificate form); PEM = Privacy-Enhanced Mail (base64 text form);
@@ -133,6 +133,7 @@ integration.
 | N06 | Patched Electron (42.11.16, 43.8.1, 44.9.1, 45.0.0-beta.6 and later) was reported exactly like unpatched Electron: the fix keeps emSign ECC Root CA - G3 and AAA in the binary and adds the SPKI SHA-256 of the 8 compromised keys to Chromium's compiled-in blocklist (GHSA-jr5w-w6x2-84p9). A file carrying all 8 hashes now marks its root and compromised-CA hits `key-blocklist` (no action) and reports the blocklist; a partial list changes nothing | fixed | `n06_*`; Electron 43.8.0 found, 43.8.1 clean on Linux, macOS and Windows |
 | N07 | Installers and images whose payload is not unpacked scanned clean (exit 0): an unpatched Logseq 2.0.2 AppImage (SquashFS), NSIS installer and DMG all returned clean. SquashFS, NSIS and Inno Setup are now detected, and these plus DMG, MSI and UPX are errors (exit 3) when the raw-bytes scan finds nothing. The 512 MiB decompression budget cut Electron app zips short (the blocklist could be missed); raised to 2 GiB | fixed | `n07_*`, `detect::tests::installers_and_squashfs` |
 | N08 | Patched Signal 8.34.0 was reported as shipping all 8 compromised keys: its Rust core (libsignal-client.node) links rustls-webpki 0.103.16, whose compiled-in `DISTRUSTED_SPKIS` holds those keys as bare SPKI DER so chains through them are rejected. A file holding all 8 keys as bare SPKIs outside any certificate is now treated like the SPKI-hash blocklist (`key-blocklist`); the same keys inside the compromised certificates still need action | fixed | `n08_*`; Signal 8.34.0 .deb clean |
+| N09 | bzip2 data (`.tar.bz2`, `.tbz`, `.bz2`, bzip2 ZIP entries) was reported "not supported" and its contents never scanned; Homebrew `gettext` ships `archive.dir.tar.bz2`, so real scans ended incomplete (exit 3) | fixed | `n09_tp_bzip2_every_form`, `scan::tests::n09_tp_bzip2_bomb_is_limited_and_partial_output_scanned` / `n09_fp_bzip2_every_form_clean`, `scan::tests::n09_fp_bzip2_under_budget_no_error`, `n09_truncated_bzip2_is_incomplete_not_clean`; pure-Rust decoder (`libbz2-rs-sys`), so `cargo tree -i bzip2-sys` still finds no C build (P08) |
 
 ## Roadmap candidates
 
