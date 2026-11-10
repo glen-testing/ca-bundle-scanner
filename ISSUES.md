@@ -11,10 +11,10 @@ does not flag the benign counterpart. Scanner tests live in
 `scanner/tests/cli.rs` (end-to-end) and in `#[cfg(test)]` modules under
 `scanner/src/`; data/site tests in `tools/test_data.py` and `tools/test_site.py`.
 
-Last full run (2026-11-02): scanner 93/93 (`cargo test --release`), data/site
-62/62 (`python3 -m unittest discover -s tools`), `cargo fmt --check` clean,
-`cargo clippy --all-targets -D warnings` clean for Linux and for
-`x86_64-pc-windows-gnu`.
+Last full run (2026-11-10, macOS arm64): scanner 113/113 (`cargo test --release`),
+data/site 62/62 (`python3 -m unittest discover -s tools`), `cargo fmt --check`
+clean, `cargo clippy --release --all-targets -D warnings` clean. Linux, Windows
+and macOS runs are in CI (`.github/workflows/ci.yml`).
 
 Glossary: CA = Certificate Authority; DER = Distinguished Encoding Rules
 (binary certificate form); PEM = Privacy-Enhanced Mail (base64 text form);
@@ -130,3 +130,4 @@ integration.
 | N03 | JavaScript fragments containing `-----BEGIN CERTIFICATE-----` inside the `node` binary produced malformed-PEM warnings | fixed | `pem::looks_like_pem_body`; default host run shows no such warnings |
 | N04 | `# SHA256 Fingerprint:` comments in certifi-style bundles produced a duplicate "reference" for every certificate already matched | fixed | `n04_fingerprint_comment_next_to_cert_not_duplicated` (FP); `c27_fingerprint_in_source_is_informational` still reports standalone fingerprints (TP) |
 | N05 | Trust stores compiled in as source literals were reported only as informational references: webpki-roots (public keys as `b"\x.."` byte strings, PEM inside ` * ` comments) and webpki-root-certs (full DER as byte strings) came back clean while shipping emSign ECC Root CA - G3; same for C/Go/Java byte arrays and JavaScript-concatenated PEM (ssl-root-cas) | fixed | `n05_tp_*` / `n05_fp_*`, `literal::tests`, `pem::commented_tests` |
+| N06 | bzip2 data (`.tar.bz2`, `.tbz`, `.bz2`, bzip2 ZIP entries) was reported "not supported" and its contents never scanned; Homebrew `gettext` ships `archive.dir.tar.bz2`, so real scans ended incomplete (exit 3) | fixed | `n06_tp_bzip2_every_form`, `scan::tests::n06_tp_bzip2_bomb_is_limited_and_partial_output_scanned` / `n06_fp_bzip2_every_form_clean`, `scan::tests::n06_fp_bzip2_under_budget_no_error`, `n06_truncated_bzip2_is_incomplete_not_clean`; pure-Rust decoder (`libbz2-rs-sys`), so `cargo tree -i bzip2-sys` still finds no C build (P08) |

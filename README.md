@@ -103,9 +103,11 @@ source comments or concatenated strings, byte literals in source (`b"\x30.."`,
 webpki-roots and webpki-root-certs), and
 binaries (PEM strings and DER bytes regardless of architecture). Archives are
 unpacked recursively, up to 5 levels: ZIP/JAR/WAR/APK (including executable
-JARs with a script prefix), gzip (multi-member), xz, zstd, tar, ar/`.deb`,
-RPM (cpio payload) and Electron `.asar`. bzip2 is reported as not inspected;
-DMG, MSI and UPX-packed files get a raw-bytes scan plus a warning.
+JARs with a script prefix), gzip (multi-member), bzip2 (`.bz2`, `.bz`,
+`.tbz`, `.tbz2`, multi-stream, and bzip2-compressed ZIP entries), xz, zstd,
+tar, ar/`.deb`, RPM (cpio payload) and Electron `.asar`. Formats are detected
+by content, not file name. DMG, MSI and UPX-packed files get a raw-bytes scan
+plus a warning.
 
 Limits per top-level file: 512 MiB of decompressed output, 100,000 archive
 entries, 4 GiB file size. Reaching a limit is reported as an error (exit 3
