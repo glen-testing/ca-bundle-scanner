@@ -1222,7 +1222,7 @@ fn archives_fp_xz_zstd_nested_clean() {
     assert_clean(&scan(&[&a, &b, &c]));
 }
 
-// ── N06: bzip2 (.bz2, .bz, .tbz, .tbz2, multi-stream, ZIP method 12) ────
+// ── N09: bzip2 (.bz2, .bz, .tbz, .tbz2, multi-stream, ZIP method 12) ────
 
 fn bzip2_of(bytes: &[u8]) -> Vec<u8> {
     let mut e = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::fast());
@@ -1256,7 +1256,7 @@ fn bzip2_variants(pem: &str) -> Vec<(&'static str, Vec<u8>)> {
 }
 
 #[test]
-fn n06_tp_bzip2_every_form() {
+fn n09_tp_bzip2_every_form() {
     let t = tempfile::tempdir().unwrap();
     for (n, b) in bzip2_variants(&target_pem()) {
         let o = scan(&[&write(t.path(), n, b)]);
@@ -1267,7 +1267,7 @@ fn n06_tp_bzip2_every_form() {
 }
 
 #[test]
-fn n06_fp_bzip2_every_form_clean() {
+fn n09_fp_bzip2_every_form_clean() {
     let t = tempfile::tempdir().unwrap();
     let paths: Vec<PathBuf> = bzip2_variants(&clean_pem())
         .into_iter()
@@ -1278,7 +1278,7 @@ fn n06_fp_bzip2_every_form_clean() {
 }
 
 #[test]
-fn n06_truncated_bzip2_is_incomplete_not_clean() {
+fn n09_truncated_bzip2_is_incomplete_not_clean() {
     let t = tempfile::tempdir().unwrap();
     let mut b = bzip2_of(&tar_of(&[("etc/ssl/ca.pem", clean_pem().as_bytes())]));
     b.truncate(b.len() / 2);
@@ -1554,4 +1554,210 @@ fn n05_fp_unrelated_certificate_and_name_only() {
     }
     let o = scan(&[&write(t.path(), "names.rs", "// emSign ECC Root CA - G3\n")]);
     assert!(action(&o).is_empty());
+}
+
+// ── N06: Chromium SPKI-hash blocklist (patched Electron) ─────────────────
+
+const COMPROMISED: [&str; 8] = [
+    "EM_EV_TLS_CA_G3B_emSign",
+    "EM_OV_TLS_CA_G3B_emSign",
+    "EM_DV_TLS_CA_G3B_emSign",
+    "EM_EV_TLS_CA_G3C_emSign",
+    "EM_OV_TLS_CA_G3C_emSign",
+    "EM_DV_TLS_CA_G3C_emSign",
+    "EM_OV_CS_CA_G3B_emSign",
+    "EM_OV_CS_CA_G3C_emSign",
+];
+
+fn spki_sha256(der: &[u8]) -> Vec<u8> {
+    use sha2::Digest;
+    let (_, c) = x509_parser::parse_x509_certificate(der).unwrap();
+    sha2::Sha256::digest(c.public_key().raw).to_vec()
+}
+
+/// An Electron-like binary: filler, the G3 and AAA roots as DER, and `n` blocklist hashes.
+fn electron_like(n: usize) -> Vec<u8> {
+    let mut b = vec![0x90u8; 4096];
+    b.extend(der("emSign_ECC_Root_G3"));
+    b.extend(vec![0u8; 512]);
+    b.extend(der("Sectigo_AAA_Certificate_Services"));
+    b.extend(vec![0u8; 512]);
+    for name in COMPROMISED.iter().take(n) {
+        b.extend(spki_sha256(&der(name)));
+    }
+    b.extend(vec![0x90u8; 4096]);
+    b
+}
+
+#[test]
+fn n06_tp_complete_key_blocklist_mitigates_roots() {
+    let t = tempfile::tempdir().unwrap();
+    let o = scan(&[&write(t.path(), "electron", electron_like(8))]);
+    assert_eq!(o.code, 0, "{}", o.stdout);
+    let f = findings(&o);
+    let roots: Vec<_> = f
+        .iter()
+        .filter(|x| x["type"] == "distrusted-root" || x["type"] == "cross-sign-root")
+        .collect();
+    assert_eq!(roots.len(), 2, "{}", o.stdout);
+    assert!(roots
+        .iter()
+        .all(|x| x["context"] == "key-blocklist" && x["action_required"] == false));
+    assert!(f
+        .iter()
+        .any(|x| x["match"] == "blocklist" && x["cert"].as_str().unwrap().contains("all 8")));
+}
+
+#[test]
+fn n06_fp_partial_blocklist_or_none_still_needs_action() {
+    let t = tempfile::tempdir().unwrap();
+    for n in [0, 7] {
+        let o = scan(&[&write(t.path(), &format!("electron{n}"), electron_like(n))]);
+        assert_found(&o);
+        assert!(action(&o)
+            .iter()
+            .any(|x| x["type"] == "distrusted-root" && x["context"] == "trust"));
+        let partial = findings(&o)
+            .iter()
+            .any(|x| x["match"] == "blocklist" && x["cert"].as_str().unwrap().contains("7 of 8"));
+        assert_eq!(partial, n == 7, "{}", o.stdout);
+    }
+}
+
+#[test]
+fn n06_fp_blocklist_in_another_file_does_not_mitigate() {
+    let t = tempfile::tempdir().unwrap();
+    let roots = write(t.path(), "bundle.bin", electron_like(0));
+    let mut hashes = Vec::new();
+    for name in COMPROMISED {
+        hashes.extend(spki_sha256(&der(name)));
+    }
+    let list = write(t.path(), "blocklist.bin", hashes);
+    let o = scan(&[&roots, &list]);
+    assert_found(&o);
+}
+
+// ── N07: opaque installers / filesystem images must not scan clean ──────
+
+fn appimage_like() -> Vec<u8> {
+    let mut b = b"\x7fELF".to_vec();
+    b.resize(8192, 0x11);
+    let mut sb = vec![0u8; 96];
+    sb[..4].copy_from_slice(b"hsqs");
+    sb[12..16].copy_from_slice(&131072u32.to_le_bytes());
+    sb[20..22].copy_from_slice(&6u16.to_le_bytes());
+    sb[22..24].copy_from_slice(&17u16.to_le_bytes());
+    sb[28..30].copy_from_slice(&4u16.to_le_bytes());
+    b.extend(sb);
+    b.extend((0..65536u32).map(|i| (i.wrapping_mul(2654435761) >> 24) as u8));
+    b
+}
+fn nsis_like() -> Vec<u8> {
+    let mut b = b"MZ".to_vec();
+    b.resize(1024, 0x22);
+    b.extend_from_slice(&[0, 0, 0, 0]);
+    b.extend_from_slice(b"\xef\xbe\xad\xdeNullsoftInst");
+    b.extend((0..65536u32).map(|i| (i.wrapping_mul(2246822519) >> 24) as u8));
+    b
+}
+
+#[test]
+fn n07_tp_appimage_and_nsis_are_incomplete_not_clean() {
+    let t = tempfile::tempdir().unwrap();
+    for (name, body, word) in [
+        ("App.AppImage", appimage_like(), "SquashFS"),
+        ("setup.exe", nsis_like(), "NSIS"),
+    ] {
+        let o = scan(&[&write(t.path(), name, body)]);
+        assert_eq!(o.code, 3, "{name}: {}", o.stdout);
+        assert!(
+            errors(&o)
+                .iter()
+                .any(|e| e["message"].as_str().unwrap().contains(word)),
+            "{}",
+            o.stdout
+        );
+    }
+}
+
+#[test]
+fn n07_fp_raw_hit_inside_opaque_file_is_found_with_warning() {
+    let t = tempfile::tempdir().unwrap();
+    let mut body = appimage_like();
+    body.extend(der(TARGET));
+    let o = scan(&[&write(t.path(), "App.AppImage", body)]);
+    assert_found(&o);
+    assert!(errors(&o).is_empty(), "{}", o.stdout);
+}
+
+#[test]
+fn n07_fp_plain_executables_unaffected() {
+    let t = tempfile::tempdir().unwrap();
+    let mut elf = b"\x7fELF".to_vec();
+    elf.resize(70000, 0x33);
+    let mut pe = b"MZ".to_vec();
+    pe.resize(70000, 0x44);
+    // A tool that only mentions the signatures (like 7-Zip) is not an installer.
+    pe.extend_from_slice(b"\xef\xbe\xad\xdeNullsoftInst Inno Setup Setup Data (%s)");
+    for (n, b) in [("tool", elf), ("tool.exe", pe)] {
+        let o = scan(&[&write(t.path(), n, b)]);
+        assert_eq!(o.code, 0, "{n}: {}", o.stdout);
+    }
+}
+
+/// A Rust-binary-like file: webpki-roots-style G3 trust anchor key plus
+/// rustls-webpki-style bare SPKIs of `n` compromised keys.
+fn rustls_like(n: usize) -> Vec<u8> {
+    let mut b = vec![0x55u8; 4096];
+    b.extend(spki_contents(&der("emSign_ECC_Root_G3")));
+    b.extend(vec![0u8; 256]);
+    for name in COMPROMISED.iter().take(n) {
+        let d = der(name);
+        let (_, c) = x509_parser::parse_x509_certificate(&d).unwrap();
+        b.extend(c.public_key().raw);
+        b.extend(vec![0u8; 16]);
+    }
+    b.extend(vec![0x55u8; 4096]);
+    b
+}
+
+#[test]
+fn n08_tp_bare_spki_distrust_list_mitigates() {
+    let t = tempfile::tempdir().unwrap();
+    let o = scan(&[&write(t.path(), "libsignal.node", rustls_like(8))]);
+    assert_eq!(o.code, 0, "{}", o.stdout);
+    let f = findings(&o);
+    assert!(
+        f.iter().filter(|x| x["type"] == "compromised").count() >= 8,
+        "{}",
+        o.stdout
+    );
+    assert!(f
+        .iter()
+        .filter(|x| x["type"] == "compromised" || x["type"] == "distrusted-root")
+        .all(|x| x["context"] == "key-blocklist" && x["action_required"] == false));
+    assert!(f.iter().any(|x| x["match"] == "blocklist"
+        && x["cert"]
+            .as_str()
+            .unwrap()
+            .contains("bare-SPKI distrust list")));
+}
+
+#[test]
+fn n08_fp_partial_list_or_full_certificates_still_need_action() {
+    let t = tempfile::tempdir().unwrap();
+    assert_found(&scan(&[&write(t.path(), "partial.node", rustls_like(7))]));
+    // The same keys inside the compromised certificates themselves are not a distrust list.
+    let mut certs = Vec::new();
+    for name in COMPROMISED {
+        certs.extend(der(name));
+        certs.extend(vec![0u8; 64]);
+    }
+    let o = scan(&[&write(t.path(), "intermediates.bin", certs)]);
+    assert_found(&o);
+    assert!(
+        !findings(&o).iter().any(|x| x["match"] == "blocklist"),
+        "{}",
+        o.stdout
+    );
 }
