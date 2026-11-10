@@ -133,3 +133,88 @@ integration.
 | N06 | Patched Electron (42.11.16, 43.8.1, 44.9.1, 45.0.0-beta.6 and later) was reported exactly like unpatched Electron: the fix keeps emSign ECC Root CA - G3 and AAA in the binary and adds the SPKI SHA-256 of the 8 compromised keys to Chromium's compiled-in blocklist (GHSA-jr5w-w6x2-84p9). A file carrying all 8 hashes now marks its root and compromised-CA hits `key-blocklist` (no action) and reports the blocklist; a partial list changes nothing | fixed | `n06_*`; Electron 43.8.0 found, 43.8.1 clean on Linux, macOS and Windows |
 | N07 | Installers and images whose payload is not unpacked scanned clean (exit 0): an unpatched Logseq 2.0.2 AppImage (SquashFS), NSIS installer and DMG all returned clean. SquashFS, NSIS and Inno Setup are now detected, and these plus DMG, MSI and UPX are errors (exit 3) when the raw-bytes scan finds nothing. The 512 MiB decompression budget cut Electron app zips short (the blocklist could be missed); raised to 2 GiB | fixed | `n07_*`, `detect::tests::installers_and_squashfs` |
 | N08 | Patched Signal 8.34.0 was reported as shipping all 8 compromised keys: its Rust core (libsignal-client.node) links rustls-webpki 0.103.16, whose compiled-in `DISTRUSTED_SPKIS` holds those keys as bare SPKI DER so chains through them are rejected. A file holding all 8 keys as bare SPKIs outside any certificate is now treated like the SPKI-hash blocklist (`key-blocklist`); the same keys inside the compromised certificates still need action | fixed | `n08_*`; Signal 8.34.0 .deb clean |
+
+## Roadmap candidates
+
+Ideas under consideration, not commitments; nothing here is implemented. Each
+one moves into the tables above, with a true-positive and a false-positive test,
+once work starts. Statements marked **to verify** are working assumptions that need
+checking against the updater's source or a lab test first.
+
+### R01: Do an app's updates check a signature or hash, and does that check survive the eMudhra compromise?
+
+**Why.** [Electron, we have a problem](https://schaerli.org/briefs/electron-we-have-a-problem/)
+(2026-11-10) shows the eMudhra keys matter most where an app trusts them *and*
+installs updates without an independent check: an attacker who can mint a TLS
+certificate can then push code. The scanner already answers the first half
+(does the app still trust the compromised CAs). This item adds the second half
+for each app it finds:
+
+1. **Is the update verified at all?** Which update method the app uses, per
+   platform, and whether that method checks a signature or a hash before
+   installing.
+2. **Does the check itself depend on the compromised CAs?** A check only helps
+   if the attacker who controls TLS cannot also satisfy it.
+
+**How each kind of check holds up**
+
+| Update check | Example | Independent of the compromised CAs? |
+|---|---|---|
+| None | electron-updater on Linux (AppImage), Squirrel.Windows `Update.exe` | No protection |
+| Hash only, fetched over the same TLS channel | electron-updater `sha512` in `latest.yml` | No: whoever forges TLS rewrites the hash too |
+| X.509 code signing judged by a trust store | electron-updater on Windows with `publisherName` (Authenticode) | Only if that trust store rejects the compromised code-signing CAs (see below) |
+| Platform signing with a vendor-only CA | Squirrel.Mac (Apple Developer ID), MSIX / Microsoft Store | Yes: eMudhra cannot issue for those |
+| Pinned vendor key | Signal (ed25519), Tuta and KeeWeb (RSA), OneKey and Trezor (GPG) | Yes, as long as the key is not fetched over TLS |
+
+**Authenticode is the case to check closely.** Two of the 8 compromised keys
+are code-signing CAs (`EM OV CS CA - G3B` / `G3C`), trusted by Windows through
+emSign ECC Root CA - G3, `emSign Root CS CA - G3` and the Sectigo AAA
+cross-signs. Microsoft blocked all 8 keys in its disallowed list on
+2026-10-19. A Windows machine that has not received that update, or an app
+that validates Authenticode against its own bundled store, would accept a
+code-signing certificate minted with those keys. **To verify:** electron-updater
+compares the signer's subject name with `publisherName` from `app-update.yml`
+rather than pinning a key, so a minted certificate carrying the same publisher
+name would pass on such a machine. If that holds, "signed electron-updater" on
+Windows is only as strong as the machine's trust list.
+
+**Approach (static, no execution)**
+
+- Identify the updater from files in the app: `app-update.yml` / `latest*.yml`
+  and `electron-updater` in the `app.asar` package list; `ShipIt` and
+  `Squirrel.framework` (Squirrel.Mac); `Update.exe` plus `.nupkg` (Squirrel.Windows);
+  `AppxManifest.xml` (MSIX); custom updaters by known module names.
+- Read the verification settings: `publisherName`,
+  `verifyUpdateCodeSignature`, update URLs (`https://` or not), and embedded
+  public keys (PEM, ed25519 hex, GPG armour) next to the update code.
+- Classify each platform build into a row of the table above, and combine it
+  with the existing trust verdict: *trusts the compromised CAs* × *update check
+  that the same attacker can satisfy* = remote code execution path, reported as
+  its own finding kind.
+- Output per app: updater, check type, whether the check depends on a trust
+  store, and which store (OS, bundled, Electron's).
+
+**Tests.** True positive: an electron-updater app with no `publisherName`
+(unverified) that still trusts the compromised CAs is reported as an update
+risk. False positives: a Squirrel.Mac build, a pinned-key updater (Signal), and
+an app with no auto-update are not.
+
+**Limits.** Static inspection can be fooled by custom or obfuscated updaters,
+so a "verified" result says what was found, not a guarantee. Update servers
+are never contacted.
+
+### R02: Unpack the installer formats that currently report "incomplete"
+
+AppImage and snap (SquashFS), NSIS and Inno Setup installers, and DMG are
+detected but not opened (N07), so users have to extract them first. Reading
+SquashFS natively (pure-Rust decoders for its gzip, xz and zstd blocks) would
+cover most Linux apps in the brief; NSIS and DMG are harder and may stay
+"extract first".
+
+### R03: Check every app in the Electron brief
+
+Scan the latest build of each of the 36 apps in the brief's table on each
+platform and compare the scanner's verdict with the brief's "Patched" column.
+Disagreements are either scanner bugs or corrections for the brief. Each app's
+verdict should follow from its bundled Electron version, plus native modules
+with their own TLS stack (Signal's Rust core, Delta Chat's core).
