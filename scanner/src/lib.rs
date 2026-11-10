@@ -10,6 +10,7 @@ pub mod pem;
 pub mod profile;
 pub mod report;
 pub mod scan;
+pub mod trust;
 pub mod util;
 #[cfg(windows)]
 mod winstore;
@@ -68,6 +69,7 @@ struct FileResult {
     findings: Vec<Finding>,
     issues: Vec<Issue>,
     scanned: bool,
+    trust: Option<trust::TrustProfile>,
 }
 
 /// Identity of a file across symlinks and duplicate paths.
@@ -176,6 +178,7 @@ fn scan_file(path: &Path, context: Context, profile: &Profile, limits: &Limits) 
     };
     let mut fs = FileScan::new(profile, limits, context, len);
     guarded(&mut fs, &display, |fs| fs.scan(data, &display));
+    res.trust = Some(std::mem::take(&mut fs.trust).finish(&display));
     res.findings = fs.findings;
     res.issues = fs.issues;
     res.scanned = true;
@@ -431,6 +434,9 @@ pub fn run(cfg: &Config, progress: &mut dyn FnMut(&LocationResult)) -> Report {
             report.files_scanned += r.scanned as usize;
             report.findings.extend(r.findings);
             report.issues.extend(r.issues);
+            if let Some(t) = r.trust.filter(|t| t.has_signal()) {
+                report.items.push(t);
+            }
         }
         if lr.errors > 0 && lr.files == 0 && walk.existed {
             lr.status = LocationStatus::Error;

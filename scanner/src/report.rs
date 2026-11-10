@@ -155,6 +155,8 @@ pub struct Report {
     pub issues: Vec<Issue>,
     pub locations: Vec<LocationResult>,
     pub files_scanned: usize,
+    /// Trust model of each scanned item that showed any trust signal.
+    pub items: Vec<crate::trust::TrustProfile>,
 }
 
 impl Report {
@@ -191,6 +193,7 @@ struct JsonOut<'a> {
     exit_code: i32,
     files_scanned: usize,
     findings: &'a [Finding],
+    items: &'a [crate::trust::TrustProfile],
     issues: &'a [Issue],
     locations: &'a [LocationResult],
 }
@@ -204,6 +207,7 @@ pub fn write_json(w: &mut dyn Write, report: &Report, profile: &Profile) -> io::
         exit_code: v.exit_code(),
         files_scanned: report.files_scanned,
         findings: &report.findings,
+        items: &report.items,
         issues: &report.issues,
         locations: &report.locations,
     };
@@ -335,6 +339,7 @@ pub fn write_text(w: &mut dyn Write, report: &Report, profile: &Profile) -> io::
             writeln!(w)?;
         }
     }
+    write_trust(w, &report.items)?;
     if !report.findings.is_empty() && !profile.text.references.is_empty() {
         writeln!(w, "References:")?;
         for r in &profile.text.references {
@@ -342,6 +347,53 @@ pub fn write_text(w: &mut dyn Write, report: &Report, profile: &Profile) -> io::
         }
     }
     Ok(())
+}
+
+/// Items listed in the text report's trust-model section.
+const TRUST_LIST_LIMIT: usize = 25;
+
+fn write_trust(w: &mut dyn Write, items: &[crate::trust::TrustProfile]) -> io::Result<()> {
+    use crate::trust::Model;
+    if items.is_empty() {
+        return Ok(());
+    }
+    writeln!(w, "== TRUST MODEL (per item) ==")?;
+    for t in items.iter().take(TRUST_LIST_LIMIT) {
+        let model = match t.model {
+            Model::Bundled => format!("bundles its own CA store ({} roots)", t.bundled_roots),
+            Model::OsStore => "trusts the OS store".to_string(),
+            Model::Both => format!(
+                "bundles a CA store ({} roots) and also uses the OS store",
+                t.bundled_roots
+            ),
+            Model::NoneDetected => "no CA store or OS-store use detected".to_string(),
+        };
+        writeln!(w, "  {}: {model}", t.path)?;
+        for (label, list) in [
+            ("bundle", &t.bundle),
+            ("OS store", &t.os_store),
+            ("pinning", &t.pinning),
+            ("blocklist", &t.blocklist),
+        ] {
+            if !list.is_empty() {
+                writeln!(w, "    {label}: {}", list.join("; "))?;
+            }
+        }
+        if t.pinning.is_empty() {
+            writeln!(w, "    pinning: none detected")?;
+        }
+        if t.blocklist.is_empty() {
+            writeln!(w, "    blocklist: none detected")?;
+        }
+    }
+    if items.len() > TRUST_LIST_LIMIT {
+        writeln!(
+            w,
+            "  … {} more (see --json `items`)",
+            items.len() - TRUST_LIST_LIMIT
+        )?;
+    }
+    writeln!(w)
 }
 
 pub fn write_issues(w: &mut dyn Write, report: &Report) -> io::Result<()> {

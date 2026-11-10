@@ -7,6 +7,7 @@ use x509_parser::prelude::*;
 use crate::detect::{self, Container};
 use crate::profile::{authority_key_id, first_cn, subject_key_id, NeedleKind, Profile};
 use crate::report::{action_required, Context, Finding, Issue, Kind, Match, Severity};
+use crate::trust::{self, TrustProfile};
 use crate::util::{basename, hex, hex_val, is_source_name, sha256, CLASS, HEX_OR_COLON};
 use crate::{der, literal, pem};
 
@@ -58,6 +59,8 @@ pub struct FileScan<'a> {
     entries_left: u64,
     hash_left: u64,
     once: u8,
+    pub trust: TrustProfile,
+    roots_seen: std::collections::HashSet<[u8; 32]>,
 }
 
 impl<'a> FileScan<'a> {
@@ -74,6 +77,23 @@ impl<'a> FileScan<'a> {
                 .hash_budget_base
                 .saturating_add(top_len.saturating_mul(8)),
             once: 0,
+            trust: TrustProfile::default(),
+            roots_seen: Default::default(),
+        }
+    }
+
+    /// Count distinct self-signed CA certificates (evidence of a bundled store).
+    fn note_cert(&mut self, der: &[u8], path: &str) {
+        if !(300..=8192).contains(&der.len()) {
+            return;
+        }
+        let Ok((_, c)) = X509Certificate::from_der(der) else {
+            return;
+        };
+        if c.is_ca() && c.subject() == c.issuer() && self.roots_seen.insert(sha256(der)) {
+            self.trust.bundled_roots += 1;
+            let entry = path.rsplit(['/', ':']).next().unwrap_or(path);
+            self.trust.add_bundle(format!("CA certificates in {entry}"));
         }
     }
 
@@ -511,6 +531,7 @@ impl<'a> FileScan<'a> {
             None
         };
         let found_before = self.findings.len();
+        trust::scan_markers(data, path, &mut self.trust);
         if !data.starts_with(b"PK") && detect::has_trailing_zip(data) {
             self.scan_zip(data, path, depth);
         }
@@ -620,6 +641,25 @@ impl<'a> FileScan<'a> {
             );
         }
         self.apply_key_blocklist(data, path, found_before);
+        for i in found_before..self.findings.len() {
+            let f = &self.findings[i];
+            let root = matches!(
+                f.kind,
+                Kind::DistrustedRoot | Kind::CrossSignRoot | Kind::InfoRoot
+            );
+            if root && f.matched == Match::PublicKey && f.sha256.is_none() {
+                let note = format!("known root trust anchor ({})", f.cert);
+                self.trust.add_bundle(note);
+            }
+            if f.context == Context::Distrust {
+                let note = format!("distrust location {}", f.path);
+                self.trust.add_blocklist(note);
+            }
+            if f.matched == Match::Blocklist {
+                let note = format!("{} ({})", f.cert, f.path);
+                self.trust.add_blocklist(note);
+            }
+        }
         if let Some(msg) = opaque {
             if self.findings.len() == found_before {
                 self.error(path, msg);
@@ -693,6 +733,7 @@ impl<'a> FileScan<'a> {
             let Some(total) = der::cert_span(&bytes[i..]) else {
                 continue;
             };
+            self.note_cert(&bytes[i..i + total], path);
             if !profile.wants_len(total) {
                 continue;
             }

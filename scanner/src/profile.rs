@@ -92,9 +92,12 @@ pub struct Profile {
     keyword_ac: Option<AhoCorasick>,
     /// SHA-256 of each distinct compromised SubjectPublicKeyInfo (as in Chromium's SPKI blocklist).
     blocked_spki: Vec<[u8; 32]>,
+    /// The hashes as raw bytes and as hex text (Go keeps them as hex strings); `.1` indexes `blocked_spki`.
+    blocked_hash_pats: Vec<(Vec<u8>, usize)>,
     blocked_ac: Option<AhoCorasick>,
-    /// The same keys as full SubjectPublicKeyInfo DER (as in rustls-webpki's DISTRUSTED_SPKIS).
-    blocked_spki_der: Vec<Vec<u8>>,
+    /// The same keys as bare SPKI DER, full and without the outer SEQUENCE header
+    /// (both appear in compiled distrust lists); `.1` is the index into `blocked_spki`.
+    blocked_spki_der: Vec<(Vec<u8>, usize)>,
     blocked_der_ac: Option<AhoCorasick>,
 }
 
@@ -126,8 +129,21 @@ impl Profile {
         if role == Role::Compromised {
             let h = sha256(cert.public_key().raw);
             if !self.blocked_spki.contains(&h) {
+                let idx = self.blocked_spki.len();
                 self.blocked_spki.push(h);
-                self.blocked_spki_der.push(cert.public_key().raw.to_vec());
+                let hx = hex(&h);
+                for pat in [
+                    h.to_vec(),
+                    hx.clone().into_bytes(),
+                    hx.to_uppercase().into_bytes(),
+                ] {
+                    self.blocked_hash_pats.push((pat, idx));
+                }
+                let raw = cert.public_key().raw;
+                self.blocked_spki_der.push((raw.to_vec(), idx));
+                if let Some((hdr, _)) = crate::der::header(raw) {
+                    self.blocked_spki_der.push((raw[hdr..].to_vec(), idx));
+                }
             }
         }
         let ski = subject_key_id(&cert).map(|s| s.to_vec());
@@ -235,10 +251,12 @@ impl Profile {
         self.needle_ac = (!pats.is_empty()).then(|| AhoCorasick::new(pats).expect("needles"));
         self.keyword_ac =
             (!self.keywords.is_empty()).then(|| AhoCorasick::new(&self.keywords).expect("kw"));
-        self.blocked_ac = (!self.blocked_spki.is_empty())
-            .then(|| AhoCorasick::new(&self.blocked_spki).expect("spki hashes"));
-        self.blocked_der_ac = (!self.blocked_spki_der.is_empty())
-            .then(|| AhoCorasick::new(&self.blocked_spki_der).expect("spki der"));
+        self.blocked_ac = (!self.blocked_hash_pats.is_empty()).then(|| {
+            AhoCorasick::new(self.blocked_hash_pats.iter().map(|(b, _)| b)).expect("spki hashes")
+        });
+        self.blocked_der_ac = (!self.blocked_spki_der.is_empty()).then(|| {
+            AhoCorasick::new(self.blocked_spki_der.iter().map(|(b, _)| b)).expect("spki der")
+        });
     }
 
     /// Compromised keys blocked in `data`: (by SPKI SHA-256, by bare SPKI DER, total keys).
@@ -253,13 +271,13 @@ impl Profile {
         let mut by_der = vec![false; total];
         if let Some(ac) = &self.blocked_ac {
             for m in ac.find_overlapping_iter(data) {
-                by_hash[m.pattern().as_usize()] = true;
+                by_hash[self.blocked_hash_pats[m.pattern().as_usize()].1] = true;
             }
         }
         if let Some(ac) = &self.blocked_der_ac {
             for m in ac.find_overlapping_iter(data) {
                 if outside_cert(m.start(), m.end()) {
-                    by_der[m.pattern().as_usize()] = true;
+                    by_der[self.blocked_spki_der[m.pattern().as_usize()].1] = true;
                 }
             }
         }
