@@ -354,7 +354,7 @@
           "retrieved": "2026-11-02"
         },
         {
-          "url": "https://hg.mozilla.org/mozilla-central/raw-file/tip/modules/libpref/init/StaticPrefList.yaml",
+          "url": "https://github.com/mozilla-firefox/firefox/blob/main/modules/libpref/init/StaticPrefList.yaml",
           "title": "mozilla-central StaticPrefList.yaml",
           "retrieved": "2026-11-02"
         },
@@ -2383,7 +2383,7 @@
           "retrieved": "2026-11-04"
         },
         {
-          "url": "https://hg.mozilla.org/mozilla-central/raw-file/tip/modules/libpref/init/StaticPrefList.yaml",
+          "url": "https://github.com/mozilla-firefox/firefox/blob/main/modules/libpref/init/StaticPrefList.yaml",
           "title": "mozilla-central StaticPrefList.yaml",
           "retrieved": "2026-11-02"
         }
