@@ -8,3 +8,6 @@ serde = "1"
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+# Standalone test project, not part of the scanner workspace.
+[workspace]

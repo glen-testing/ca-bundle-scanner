@@ -7,7 +7,7 @@ use clap::{ArgGroup, Parser, ValueEnum};
 use ca_bundle_scanner::profile::{Profile, Role};
 use ca_bundle_scanner::report::{self, LocationResult, LocationStatus};
 use ca_bundle_scanner::scan::Limits;
-use ca_bundle_scanner::{run, Config};
+use ca_bundle_scanner::{deps, run, Config};
 
 #[derive(Clone, Copy, ValueEnum)]
 enum ProfileName {
@@ -56,6 +56,20 @@ struct Args {
     /// Files scanned in parallel (default: CPU count, at most 4).
     #[arg(long, value_name = "N")]
     jobs: Option<usize>,
+
+    /// Skip dependency analysis of `-p` project folders that hold lockfiles.
+    #[arg(long)]
+    no_deps: bool,
+    /// Dependency analysis: resolve dependencies and download each bundled CA store
+    /// to inspect it (uses the network); affected dependencies then need action.
+    #[arg(long, conflicts_with = "no_deps")]
+    deps_online: bool,
+    /// Dependency analysis: count dev/test dependencies as shipped.
+    #[arg(long)]
+    deps_include_dev: bool,
+    /// Download cache for --deps-online (default: $XDG_CACHE_HOME/ca-certs-in-code).
+    #[arg(long, value_name = "DIR")]
+    deps_cache_dir: Option<PathBuf>,
 
     /// Print only the result and findings (no progress).
     #[arg(short, long)]
@@ -156,6 +170,17 @@ fn main() -> ExitCode {
         jobs: jobs.max(1),
         env: std::env::vars().collect(),
         os: std::env::consts::OS.to_string(),
+        deps: deps::Options {
+            mode: if a.no_deps {
+                deps::Mode::Off
+            } else if a.deps_online {
+                deps::Mode::Online
+            } else {
+                deps::Mode::Offline
+            },
+            include_dev: a.deps_include_dev,
+            cache_dir: a.deps_cache_dir.clone(),
+        },
     };
     let mut progress = |l: &LocationResult| {
         if chatty {

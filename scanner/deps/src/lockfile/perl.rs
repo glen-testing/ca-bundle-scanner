@@ -7,16 +7,18 @@ use std::path::Path;
 /// Carton `cpanfile.snapshot`: distributions, the modules each provides, and the
 /// modules each requires (mapped back to the providing distribution).
 pub fn parse(path: &Path) -> Result<ParsedLock> {
-    let content = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     Ok(parse_str(&content))
 }
 
 /// "Mozilla-CA-20260813" -> ("Mozilla-CA", "20260813").
 fn split_dist(d: &str) -> (String, String) {
     match d.rfind('-') {
-        Some(i) if d[i + 1..].starts_with(|c: char| c.is_ascii_digit() || c == 'v') => {
-            (d[..i].to_string(), d[i + 1..].trim_start_matches('v').to_string())
-        }
+        Some(i) if d[i + 1..].starts_with(|c: char| c.is_ascii_digit() || c == 'v') => (
+            d[..i].to_string(),
+            d[i + 1..].trim_start_matches('v').to_string(),
+        ),
         _ => (d.to_string(), String::new()),
     }
 }
@@ -37,7 +39,9 @@ fn parse_str(content: &str) -> ParsedLock {
             }
             4 => mode = line.trim_end_matches(':'),
             6 => {
-                let (Some(d), Some(module)) = (&dist, line.split_whitespace().next()) else { continue };
+                let (Some(d), Some(module)) = (&dist, line.split_whitespace().next()) else {
+                    continue;
+                };
                 match mode {
                     "provides" => {
                         provides.insert(module.to_string(), d.clone());
@@ -50,12 +54,21 @@ fn parse_str(content: &str) -> ParsedLock {
         }
     }
     for (from, module) in requires {
-        let Some(to) = provides.get(&module) else { continue };
-        let (Some(&f), Some(&t)) = (graph.find_all(&from).first(), graph.find_all(to).first()) else { continue };
+        let Some(to) = provides.get(&module) else {
+            continue;
+        };
+        let (Some(&f), Some(&t)) = (graph.find_all(&from).first(), graph.find_all(to).first())
+        else {
+            continue;
+        };
         graph.add_edge(f, t);
     }
     graph.link_orphans_to_root();
-    ParsedLock { graph, evidence: Evidence::LockfileGraph, notes: vec![] }
+    ParsedLock {
+        graph,
+        evidence: Evidence::LockfileGraph,
+        notes: vec![],
+    }
 }
 
 #[cfg(test)]
@@ -69,12 +82,20 @@ mod tests {
         let p = parse_str(SNAP);
         let i = p.graph.find_unique("Mozilla-CA").unwrap();
         assert_eq!(p.graph.graph[i].version, "20260813");
-        assert_eq!(p.graph.path_to(i).unwrap(), vec!["(cpanfile)", "LWP-Protocol-https 6.14", "Mozilla-CA 20260813"]);
+        assert_eq!(
+            p.graph.path_to(i).unwrap(),
+            vec![
+                "(cpanfile)",
+                "LWP-Protocol-https 6.14",
+                "Mozilla-CA 20260813"
+            ]
+        );
     }
 
     #[test]
     fn fp_requirement_without_provider_adds_no_edge() {
-        let p = parse_str(&SNAP.replace("      Mozilla::CA 20180117\n", "      Unknown::Module 1\n"));
+        let p =
+            parse_str(&SNAP.replace("      Mozilla::CA 20180117\n", "      Unknown::Module 1\n"));
         let i = p.graph.find_unique("Mozilla-CA").unwrap();
         // Becomes a top-level orphan, linked straight to the root.
         assert_eq!(p.graph.path_to(i).unwrap().len(), 2);

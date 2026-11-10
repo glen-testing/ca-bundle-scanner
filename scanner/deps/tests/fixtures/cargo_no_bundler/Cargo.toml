@@ -5,3 +5,6 @@ edition = "2021"
 
 [dependencies]
 serde = "1"
+
+# Standalone test project, not part of the scanner workspace.
+[workspace]

@@ -48,7 +48,9 @@ impl DepGraph {
     }
 
     pub fn find_version(&self, name: &str, version: &str) -> Option<NodeIndex> {
-        self.by_key.get(&(name.to_string(), version.to_string())).copied()
+        self.by_key
+            .get(&(name.to_string(), version.to_string()))
+            .copied()
     }
 
     /// Single version of `name`, if exactly one exists.

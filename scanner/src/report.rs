@@ -36,6 +36,8 @@ pub enum Kind {
     InfoRoot,
     IssuedByCompromised,
     Reference,
+    /// A project dependency ships a CA store containing affected certificates.
+    DependencyBundle,
 }
 
 impl From<Role> for Kind {
@@ -65,6 +67,8 @@ pub enum Match {
     Keyword,
     /// The compromised public keys listed for rejection (SPKI SHA-256 hashes or bare SPKIs).
     Blocklist,
+    /// Found through dependency analysis of a lockfile.
+    Dependency,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -157,6 +161,8 @@ pub struct Report {
     pub files_scanned: usize,
     /// Trust model of each scanned item that showed any trust signal.
     pub items: Vec<crate::trust::TrustProfile>,
+    /// Dependencies of scanned projects that bundle a CA store.
+    pub dependencies: Vec<ca_certs_in_code::report::Finding>,
 }
 
 impl Report {
@@ -194,6 +200,7 @@ struct JsonOut<'a> {
     files_scanned: usize,
     findings: &'a [Finding],
     items: &'a [crate::trust::TrustProfile],
+    dependencies: &'a [ca_certs_in_code::report::Finding],
     issues: &'a [Issue],
     locations: &'a [LocationResult],
 }
@@ -208,6 +215,7 @@ pub fn write_json(w: &mut dyn Write, report: &Report, profile: &Profile) -> io::
         files_scanned: report.files_scanned,
         findings: &report.findings,
         items: &report.items,
+        dependencies: &report.dependencies,
         issues: &report.issues,
         locations: &report.locations,
     };
@@ -223,6 +231,7 @@ fn section_title(kind: Kind) -> &'static str {
         Kind::IssuedByCompromised => "CERTIFICATES ISSUED BY A COMPROMISED CA",
         Kind::InfoRoot => "SAME-OPERATOR ROOTS (not distrusted)",
         Kind::Reference => "REFERENCES IN TEXT",
+        Kind::DependencyBundle => "DEPENDENCIES THAT BUNDLE AN AFFECTED CA STORE",
     }
 }
 
@@ -239,6 +248,7 @@ fn advice(kind: Kind) -> &'static str {
         Kind::IssuedByCompromised => "Replace these certificates; their issuer's key is public.",
         Kind::InfoRoot => "Informational: these roots were not distrusted.",
         Kind::Reference => "Informational: text mentions a listed certificate or CA name.",
+        Kind::DependencyBundle => "Update the dependency (or what pulls it in, see the chain) to a release without these certificates.",
     }
 }
 
@@ -340,6 +350,7 @@ pub fn write_text(w: &mut dyn Write, report: &Report, profile: &Profile) -> io::
         }
     }
     write_trust(w, &report.items)?;
+    write_dependencies(w, &report.dependencies)?;
     if !report.findings.is_empty() && !profile.text.references.is_empty() {
         writeln!(w, "References:")?;
         for r in &profile.text.references {
@@ -347,6 +358,44 @@ pub fn write_text(w: &mut dyn Write, report: &Report, profile: &Profile) -> io::
         }
     }
     Ok(())
+}
+
+fn write_dependencies(
+    w: &mut dyn Write,
+    deps: &[ca_certs_in_code::report::Finding],
+) -> io::Result<()> {
+    if deps.is_empty() {
+        return Ok(());
+    }
+    writeln!(w, "== DEPENDENCIES THAT BUNDLE A CA STORE ==")?;
+    for d in deps.iter().take(TRUST_LIST_LIMIT) {
+        let status = match (&d.mitigated_by, &d.bundle, d.reachable) {
+            (_, _, false) => "not on a runtime path".to_string(),
+            (Some(m), _, _) => format!("mitigated: {m}"),
+            (None, Some(b), _) if b.affected => {
+                format!("AFFECTED: {}", b.affected_certs.join(", "))
+            }
+            (None, Some(_), _) => "bundle checked: clean".to_string(),
+            (None, None, _) => "bundle not checked (run with --deps-online)".to_string(),
+        };
+        writeln!(
+            w,
+            "  {} {} ({}) in {}",
+            d.package, d.version, d.ecosystem, d.lockfile
+        )?;
+        if let Some(c) = &d.dep_chain {
+            writeln!(w, "    chain: {}", c.join(" -> "))?;
+        }
+        writeln!(w, "    {status}")?;
+    }
+    if deps.len() > TRUST_LIST_LIMIT {
+        writeln!(
+            w,
+            "  … {} more (see --json `dependencies`)",
+            deps.len() - TRUST_LIST_LIMIT
+        )?;
+    }
+    writeln!(w)
 }
 
 /// Items listed in the text report's trust-model section.

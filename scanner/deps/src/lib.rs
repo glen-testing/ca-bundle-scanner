@@ -5,6 +5,8 @@ pub mod graph;
 pub mod lockfile;
 pub mod report;
 
+pub use anyhow;
+
 use anyhow::Result;
 use std::path::PathBuf;
 
@@ -95,24 +97,7 @@ pub struct ParsedLock {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OutputFormat {
-    Human,
-    Json,
-}
-
-impl std::str::FromStr for OutputFormat {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
-            "human" => Ok(OutputFormat::Human),
-            "json" => Ok(OutputFormat::Json),
-            _ => anyhow::bail!("unknown format: {s} (expected: human, json)"),
-        }
-    }
-}
-
-pub struct RunConfig {
+pub struct RunConfig<'a> {
     pub target_dir: PathBuf,
     pub lockfile_path: Option<PathBuf>,
     pub ecosystem_filter: Option<Ecosystem>,
@@ -122,12 +107,13 @@ pub struct RunConfig {
     pub no_resolve: bool,
     pub python_version: String,
     pub deep_scan: bool,
-    pub scanner_path: Option<PathBuf>,
+    /// Inspects a downloaded bundle for the deep scan (supplied by ca-bundle-scanner).
+    pub inspector: Option<Box<deep_scan::Inspector<'a>>>,
     pub cache_dir: Option<PathBuf>,
     pub verbose: bool,
 }
 
-impl RunConfig {
+impl RunConfig<'_> {
     pub fn new(target_dir: impl Into<PathBuf>) -> Self {
         Self {
             target_dir: target_dir.into(),
@@ -139,7 +125,7 @@ impl RunConfig {
             no_resolve: false,
             python_version: "3.12".into(),
             deep_scan: false,
-            scanner_path: None,
+            inspector: None,
             cache_dir: None,
             verbose: false,
         }
@@ -159,9 +145,11 @@ impl RunOutput {
         if !self.errors.is_empty() {
             return 2;
         }
-        let hit = self.findings.iter().filter(|f| f.reachable && f.mitigated_by.is_none()).any(|f| {
-            !deep_scan || f.bundle.as_ref().is_some_and(|b| b.affected)
-        });
+        let hit = self
+            .findings
+            .iter()
+            .filter(|f| f.reachable && f.mitigated_by.is_none())
+            .any(|f| !deep_scan || f.bundle.as_ref().is_some_and(|b| b.affected));
         u8::from(hit)
     }
 }
@@ -186,11 +174,19 @@ pub fn run(config: &RunConfig) -> RunOutput {
     };
 
     if lockfiles.is_empty() {
-        out.notes.push(format!("no lockfiles found under {}", absolute(&config.target_dir).display()));
+        out.notes.push(format!(
+            "no lockfiles found under {}",
+            absolute(&config.target_dir).display()
+        ));
         return out;
     }
 
     let bundlers = database::known_bundlers();
+    // Each package version is deep-scanned once per run, however many lockfiles name it.
+    let mut scanned: std::collections::HashMap<
+        (String, String),
+        Result<deep_scan::BundleScan, String>,
+    > = std::collections::HashMap::new();
     for (path, eco) in &lockfiles {
         if config.ecosystem_filter.is_some_and(|f| f != *eco) {
             continue;
@@ -205,7 +201,12 @@ pub fn run(config: &RunConfig) -> RunOutput {
                 continue;
             }
         };
-        out.notes.extend(parsed.notes.iter().map(|n| format!("{}: {n}", path.display())));
+        out.notes.extend(
+            parsed
+                .notes
+                .iter()
+                .map(|n| format!("{}: {n}", path.display())),
+        );
 
         for bundler in bundlers.iter().filter(|b| b.ecosystem == *eco) {
             for &idx in parsed.graph.find_all(bundler.package) {
@@ -215,15 +216,23 @@ pub fn run(config: &RunConfig) -> RunOutput {
                     continue;
                 }
                 let dep = parsed.graph.graph[idx].clone();
-                let mut finding = Finding::new(bundler, &dep, path, chain, parsed.evidence, &parsed.graph);
+                let mut finding =
+                    Finding::new(bundler, &dep, path, chain, parsed.evidence, &parsed.graph);
                 finding.mitigated_by = mitigation(bundler, &dep, &parsed.graph);
                 if config.deep_scan && reachable {
-                    match deep_scan::scan(bundler, &dep, config) {
-                        Ok(b) => finding.bundle = Some(b),
+                    let key = (dep.name.clone(), dep.version.clone());
+                    let fresh = !scanned.contains_key(&key);
+                    let result = scanned.entry(key).or_insert_with(|| {
+                        deep_scan::scan(bundler, &dep, config).map_err(|e| format!("{e:#}"))
+                    });
+                    match result {
+                        Ok(b) => finding.bundle = Some(b.clone()),
                         Err(e) => {
-                            let msg = format!("deep scan of {} {}: {e:#}", dep.name, dep.version);
+                            let msg = format!("deep scan of {} {}: {e}", dep.name, dep.version);
                             finding.deep_scan_error = Some(msg.clone());
-                            out.errors.push(msg);
+                            if fresh {
+                                out.errors.push(msg);
+                            }
                         }
                     }
                 }
@@ -236,14 +245,25 @@ pub fn run(config: &RunConfig) -> RunOutput {
 
 /// Rust root stores are only consulted through rustls-webpki; if every reachable copy
 /// carries the compromised-key distrust list, chains through those keys fail anyway.
-fn mitigation(bundler: &database::CertBundlerEntry, dep: &ResolvedDep, graph: &graph::DepGraph) -> Option<String> {
+fn mitigation(
+    bundler: &database::CertBundlerEntry,
+    dep: &ResolvedDep,
+    graph: &graph::DepGraph,
+) -> Option<String> {
     match bundler.package {
         "electron" => {
-            return database::electron_blocks_compromised_keys(&dep.version)
-                .then(|| format!("Electron {} blocks the compromised keys (GHSA-jr5w-w6x2-84p9)", dep.version));
+            return database::electron_blocks_compromised_keys(&dep.version).then(|| {
+                format!(
+                    "Electron {} blocks the compromised keys (GHSA-jr5w-w6x2-84p9)",
+                    dep.version
+                )
+            });
         }
         "golang.org/x/crypto/x509roots/fallback" => {
-            let go = graph.find_all("go").first().map(|&i| graph.graph[i].version.clone())?;
+            let go = graph
+                .find_all("go")
+                .first()
+                .map(|&i| graph.graph[i].version.clone())?;
             return database::go_blocks_compromised_keys(&go)
                 .then(|| format!("go.mod requires Go {go}, whose crypto/x509 rejects chains through the compromised keys"));
         }
@@ -257,15 +277,22 @@ fn mitigation(bundler: &database::CertBundlerEntry, dep: &ResolvedDep, graph: &g
         .map(|&i| &graph.graph[i])
         .collect();
     let all_fixed = !verifiers.is_empty()
-        && verifiers.iter().all(|d| database::rustls_webpki_rejects_compromised_keys(&d.version));
+        && verifiers
+            .iter()
+            .all(|d| database::rustls_webpki_rejects_compromised_keys(&d.version));
     all_fixed.then(|| {
         let v: Vec<&str> = verifiers.iter().map(|d| d.version.as_str()).collect();
-        format!("rustls-webpki {} rejects chains through the compromised keys (DISTRUSTED_SPKIS)", v.join(", "))
+        format!(
+            "rustls-webpki {} rejects chains through the compromised keys (DISTRUSTED_SPKIS)",
+            v.join(", ")
+        )
     })
 }
 
 pub fn absolute(p: &std::path::Path) -> PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| {
-        std::env::current_dir().map(|d| d.join(p)).unwrap_or_else(|_| p.to_path_buf())
+        std::env::current_dir()
+            .map(|d| d.join(p))
+            .unwrap_or_else(|_| p.to_path_buf())
     })
 }

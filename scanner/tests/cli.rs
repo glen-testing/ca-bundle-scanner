@@ -892,6 +892,7 @@ fn c18_tp_hostile_file_names_roundtrip() {
         .collect();
     keys.sort();
     let want = [
+        "dependencies",
         "exit_code",
         "files_scanned",
         "findings",
@@ -1957,4 +1958,170 @@ fn n13_fp_incomplete_onecrl_or_other_app_does_not_mitigate() {
     write(&t.path().join("apps"), "a/libxul.so", &full[0].1);
     write(&t.path().join("apps"), "b/browser/omni.ja", &full[1].1);
     assert_found(&scan(&[&t.path().join("apps")]));
+}
+
+// ── N14: dependency analysis of project folders (built in from deps/) ───
+
+fn scan_with(paths: &[&Path], extra: &[&str]) -> Out {
+    let mut args = vec![
+        "--profile",
+        "emudhra",
+        "--no-system",
+        "--json",
+        "--jobs",
+        "1",
+    ];
+    args.extend_from_slice(extra);
+    let strs: Vec<String> = paths
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    for s in &strs {
+        args.push("-p");
+        args.push(s);
+    }
+    run_args(&args, &[])
+}
+fn deps_of(o: &Out) -> Vec<String> {
+    let mut v: Vec<String> = o.json["dependencies"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|d| {
+            format!(
+                "{} {}",
+                d["package"].as_str().unwrap(),
+                d["version"].as_str().unwrap()
+            )
+        })
+        .collect();
+    v.sort();
+    v
+}
+const TWO_WEBPKI_LOCK: &str = "version = 3\n[[package]]\nname = \"api\"\nversion = \"0.1.0\"\ndependencies = [\"webpki-roots 0.25.4\"]\n\n[[package]]\nname = \"worker\"\nversion = \"0.1.0\"\ndependencies = [\"webpki-roots 0.26.3\"]\n\n[[package]]\nname = \"webpki-roots\"\nversion = \"0.25.4\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n[[package]]\nname = \"webpki-roots\"\nversion = \"0.26.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n";
+
+#[test]
+fn n14_tp_offline_lists_bundling_dependencies_without_changing_verdict() {
+    let t = tempfile::tempdir().unwrap();
+    write(t.path(), "Cargo.lock", TWO_WEBPKI_LOCK);
+    let o = scan_with(&[t.path()], &[]);
+    assert_eq!(
+        deps_of(&o),
+        vec!["webpki-roots 0.25.4", "webpki-roots 0.26.3"],
+        "{}",
+        o.stdout
+    );
+    // Offline the bundle contents are unknown, so nothing needs action yet.
+    assert_eq!(o.code, 0, "{}", o.stdout);
+    assert!(action(&o).is_empty());
+}
+
+#[test]
+fn n14_fp_no_lockfile_or_no_deps_flag_means_no_analysis() {
+    let t = tempfile::tempdir().unwrap();
+    write(t.path(), "notes.txt", "nothing here");
+    assert!(deps_of(&scan_with(&[t.path()], &[])).is_empty());
+    write(t.path(), "Cargo.lock", TWO_WEBPKI_LOCK);
+    assert!(deps_of(&scan_with(&[t.path()], &["--no-deps"])).is_empty());
+}
+
+fn online(files: &[(&str, &str)], cache: &Path) -> Out {
+    let t = tempfile::tempdir().unwrap();
+    for (n, c) in files {
+        write(t.path(), n, c);
+    }
+    let c = cache.to_string_lossy().into_owned();
+    scan_with(&[t.path()], &["--deps-online", "--deps-cache-dir", &c])
+}
+fn dep_affected(o: &Out, pkg: &str) -> Option<bool> {
+    o.json["dependencies"]
+        .as_array()?
+        .iter()
+        .find(|d| d["package"] == pkg)
+        .and_then(|d| d["bundle"]["affected"].as_bool())
+}
+
+#[test]
+#[ignore = "network: uv and PyPI"]
+fn n14_tp_fp_online_certifi_and_botocore() {
+    let cache = tempfile::tempdir().unwrap();
+    let o = online(
+        &[("requirements.txt", "certifi==2024.8.30\n")],
+        cache.path(),
+    );
+    assert_found(&o);
+    assert!(action(&o).iter().any(|f| f["type"] == "dependency-bundle"));
+    let o = online(
+        &[("requirements.txt", "certifi==2026.10.23\n")],
+        cache.path(),
+    );
+    assert_eq!(dep_affected(&o, "certifi"), Some(false), "{}", o.stdout);
+    assert!(action(&o).is_empty(), "{}", o.stdout);
+    for (v, want) in [("1.43.116", true), ("1.43.117", false)] {
+        let o = online(
+            &[("requirements.txt", &format!("botocore=={v}\n"))],
+            cache.path(),
+        );
+        assert_eq!(
+            dep_affected(&o, "botocore"),
+            Some(want),
+            "{v}: {}",
+            o.stdout
+        );
+    }
+}
+
+#[test]
+#[ignore = "network: crates.io"]
+fn n14_tp_online_webpki_roots_versions() {
+    let cache = tempfile::tempdir().unwrap();
+    let o = online(&[("Cargo.lock", TWO_WEBPKI_LOCK)], cache.path());
+    assert_eq!(dep_affected(&o, "webpki-roots"), Some(true), "{}", o.stdout);
+    let fixed = TWO_WEBPKI_LOCK
+        .replace("0.25.4", "1.0.11")
+        .replace("0.26.3", "1.0.11");
+    let o = online(&[("Cargo.lock", &fixed)], cache.path());
+    assert_eq!(
+        dep_affected(&o, "webpki-roots"),
+        Some(false),
+        "{}",
+        o.stdout
+    );
+}
+
+const GEMS: &str =
+    "GEM\n  remote: https://rubygems.org/\n  specs:\n    excon (EXCON)\n\nDEPENDENCIES\n  excon\n";
+const COMPOSER: &str = r#"{"packages":[{"name":"composer/ca-bundle","version":"BUNDLE"}]}"#;
+const MIX: &str =
+    "%{\n  \"castore\": {:hex, :castore, \"CASTORE\", \"a\", [:mix], [], \"hexpm\", \"b\"},\n}\n";
+const CPAN: &str =
+    "DISTRIBUTIONS\n  Mozilla-CA-MOZCA\n    pathname: L/LW/LWP/Mozilla-CA-MOZCA.tar.gz\n";
+
+#[test]
+#[ignore = "network: RubyGems, Packagist, Hex, MetaCPAN"]
+fn n14_tp_fp_online_ruby_php_hex_perl() {
+    let cache = tempfile::tempdir().unwrap();
+    for (excon, bundle, castore, mozca, want) in [
+        ("1.7.3", "1.4.15", "1.0.21", "20260813", true),
+        ("1.8.0", "1.4.16", "1.0.22", "20261020", false),
+    ] {
+        let o = online(
+            &[
+                ("Gemfile.lock", &GEMS.replace("EXCON", excon)),
+                ("composer.lock", &COMPOSER.replace("BUNDLE", bundle)),
+                ("mix.lock", &MIX.replace("CASTORE", castore)),
+                ("cpanfile.snapshot", &CPAN.replace("MOZCA", mozca)),
+            ],
+            cache.path(),
+        );
+        for pkg in ["excon", "composer/ca-bundle", "castore", "Mozilla-CA"] {
+            assert_eq!(
+                dep_affected(&o, pkg),
+                Some(want),
+                "{pkg} ({want}): {}",
+                o.stdout
+            );
+        }
+    }
 }

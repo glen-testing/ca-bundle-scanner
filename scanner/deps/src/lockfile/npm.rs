@@ -7,7 +7,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub fn parse(path: &Path, include_dev: bool) -> Result<ParsedLock> {
-    let content = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     parse_str(&content, include_dev)
 }
 
@@ -20,7 +21,10 @@ fn ships_in_app(key: &str) -> bool {
 
 fn is_dev(info: &Value) -> bool {
     info.get("dev").and_then(Value::as_bool).unwrap_or(false)
-        || info.get("devOptional").and_then(Value::as_bool).unwrap_or(false)
+        || info
+            .get("devOptional")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
 }
 
 fn dep_keys<'a>(info: &'a Value, fields: &[&str]) -> Vec<&'a str> {
@@ -40,20 +44,29 @@ fn name_from_path(key: &str) -> &str {
 fn resolve<'a>(packages: &'a Map<String, Value>, from: &str, dep: &str) -> Option<&'a str> {
     let mut base = from.to_string();
     loop {
-        let candidate = if base.is_empty() { format!("node_modules/{dep}") } else { format!("{base}/node_modules/{dep}") };
+        let candidate = if base.is_empty() {
+            format!("node_modules/{dep}")
+        } else {
+            format!("{base}/node_modules/{dep}")
+        };
         if let Some((k, _)) = packages.get_key_value(&candidate) {
             return Some(k.as_str());
         }
         if base.is_empty() {
             return None;
         }
-        base = base.rfind("/node_modules/").map_or(String::new(), |i| base[..i].to_string());
+        base = base
+            .rfind("/node_modules/")
+            .map_or(String::new(), |i| base[..i].to_string());
     }
 }
 
 fn parse_str(content: &str, include_dev: bool) -> Result<ParsedLock> {
     let doc: Value = serde_json::from_str(content).context("parsing package-lock.json")?;
-    let name = doc.get("name").and_then(Value::as_str).unwrap_or("(npm-project)");
+    let name = doc
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("(npm-project)");
     let version = doc.get("version").and_then(Value::as_str).unwrap_or("");
     let mut graph = DepGraph::new(ResolvedDep::new(name, version, Ecosystem::Node));
 
@@ -71,23 +84,42 @@ fn parse_str(content: &str, include_dev: bool) -> Result<ParsedLock> {
             continue;
         }
         let v = info.get("version").and_then(Value::as_str).unwrap_or("");
-        let n = info.get("name").and_then(Value::as_str).unwrap_or_else(|| name_from_path(key));
-        nodes.insert(key.as_str(), graph.add_dep(ResolvedDep::new(n, v, Ecosystem::Node)));
+        let n = info
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| name_from_path(key));
+        nodes.insert(
+            key.as_str(),
+            graph.add_dep(ResolvedDep::new(n, v, Ecosystem::Node)),
+        );
     }
     for (key, info) in packages {
-        let Some(&from) = nodes.get(key.as_str()) else { continue };
+        let Some(&from) = nodes.get(key.as_str()) else {
+            continue;
+        };
         // Workspace link: edge to the linked package directory, whose own deps are walked separately.
         if info.get("link").and_then(Value::as_bool).unwrap_or(false) {
-            let target = info.get("resolved").and_then(Value::as_str).and_then(|r| nodes.get(r));
+            let target = info
+                .get("resolved")
+                .and_then(Value::as_str)
+                .and_then(|r| nodes.get(r));
             if let Some(&to) = target {
                 graph.add_edge(from, to);
             }
             continue;
         }
-        let fields: &[&str] = if key.is_empty() { &fields } else { &fields[..3] };
+        let fields: &[&str] = if key.is_empty() {
+            &fields
+        } else {
+            &fields[..3]
+        };
         let mut deps = dep_keys(info, fields);
         if key.is_empty() && !include_dev {
-            deps.extend(dep_keys(info, &["devDependencies"]).into_iter().filter(|d| SHIPPED_DEV.contains(d)));
+            deps.extend(
+                dep_keys(info, &["devDependencies"])
+                    .into_iter()
+                    .filter(|d| SHIPPED_DEV.contains(d)),
+            );
         }
         for dep in deps {
             if let Some(&to) = resolve(packages, key, dep).and_then(|k| nodes.get(k)) {
@@ -95,7 +127,11 @@ fn parse_str(content: &str, include_dev: bool) -> Result<ParsedLock> {
             }
         }
     }
-    Ok(ParsedLock { graph, evidence: Evidence::RuntimeDependencyPath, notes: vec![] })
+    Ok(ParsedLock {
+        graph,
+        evidence: Evidence::RuntimeDependencyPath,
+        notes: vec![],
+    })
 }
 
 fn parse_v1(doc: &Value, mut graph: DepGraph, include_dev: bool) -> Result<ParsedLock> {
@@ -119,7 +155,9 @@ fn parse_v1(doc: &Value, mut graph: DepGraph, include_dev: bool) -> Result<Parse
     Ok(ParsedLock {
         graph,
         evidence: Evidence::LockfileGraph,
-        notes: vec!["lockfileVersion 1: nesting reflects install layout, not exact dependency edges".into()],
+        notes: vec![
+            "lockfileVersion 1: nesting reflects install layout, not exact dependency edges".into(),
+        ],
     })
 }
 
@@ -151,7 +189,10 @@ mod tests {
     fn tp_nested_resolution_picks_nearest_copy() {
         let p = parse_str(LOCK, false).unwrap();
         assert_eq!(reachable_versions(&p, "ssl-root-cas"), vec!["1.3.1"]);
-        let c = p.graph.path_to(p.graph.find_version("ssl-root-cas", "1.3.1").unwrap()).unwrap();
+        let c = p
+            .graph
+            .path_to(p.graph.find_version("ssl-root-cas", "1.3.1").unwrap())
+            .unwrap();
         assert_eq!(c, vec!["app 1.0.0", "client 1.0.0", "ssl-root-cas 1.3.1"]);
     }
 
@@ -179,7 +220,10 @@ mod tests {
           "packages/api":{"name":"api","version":"0.1.0","dependencies":{"ssl-root-cas":"^1"}},
           "node_modules/ssl-root-cas":{"version":"1.3.1"}}}"#;
         let p = parse_str(lock, false).unwrap();
-        let c = p.graph.path_to(p.graph.find_unique("ssl-root-cas").unwrap()).unwrap();
+        let c = p
+            .graph
+            .path_to(p.graph.find_unique("ssl-root-cas").unwrap())
+            .unwrap();
         assert_eq!(c.last().unwrap(), "ssl-root-cas 1.3.1");
     }
 

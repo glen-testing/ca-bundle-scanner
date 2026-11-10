@@ -161,14 +161,24 @@ mod tests {
     fn no_duplicate_entries() {
         let mut seen = HashSet::new();
         for b in known_bundlers() {
-            assert!(seen.insert((b.package, b.ecosystem)), "duplicate: {}", b.package);
+            assert!(
+                seen.insert((b.package, b.ecosystem)),
+                "duplicate: {}",
+                b.package
+            );
         }
     }
 
     #[test]
     fn tp_known_bundlers_present() {
         let names: HashSet<_> = known_bundlers().iter().map(|b| b.package).collect();
-        for n in ["certifi", "webpki-roots", "webpki-root-certs", "httplib2", "grpcio"] {
+        for n in [
+            "certifi",
+            "webpki-roots",
+            "webpki-root-certs",
+            "httplib2",
+            "grpcio",
+        ] {
             assert!(names.contains(n), "{n} missing");
         }
     }
@@ -178,7 +188,13 @@ mod tests {
         // node-forge has no root store, ca-certificates is not an npm package,
         // golang.org/x/crypto as a whole is not the fallback root module.
         let names: HashSet<_> = known_bundlers().iter().map(|b| b.package).collect();
-        for n in ["node-forge", "ca-certificates", "golang.org/x/crypto", "pip", "requests"] {
+        for n in [
+            "node-forge",
+            "ca-certificates",
+            "golang.org/x/crypto",
+            "pip",
+            "requests",
+        ] {
             assert!(!names.contains(n), "{n} should not be listed");
         }
     }
@@ -188,7 +204,9 @@ mod tests {
 /// when a bundled root store still contains emSign ECC Root CA - G3.
 pub fn rustls_webpki_rejects_compromised_keys(version: &str) -> bool {
     use semver::Version;
-    let Ok(v) = Version::parse(version) else { return false };
+    let Ok(v) = Version::parse(version) else {
+        return false;
+    };
     // DISTRUSTED_SPKIS: 0.103.16+ on the 0.103 line, 0.104.0-alpha.8+ after it.
     let fixed_103 = v >= Version::new(0, 103, 16) && v < Version::parse("0.104.0-alpha.0").unwrap();
     fixed_103 || v >= Version::parse("0.104.0-alpha.8").unwrap()
@@ -200,14 +218,28 @@ mod mitigation_tests {
 
     #[test]
     fn tp_fixed_releases() {
-        for v in ["0.103.16", "0.103.20", "0.104.0-alpha.8", "0.104.0", "0.105.1"] {
+        for v in [
+            "0.103.16",
+            "0.103.20",
+            "0.104.0-alpha.8",
+            "0.104.0",
+            "0.105.1",
+        ] {
             assert!(fixed(v), "{v}");
         }
     }
 
     #[test]
     fn fp_unfixed_releases() {
-        for v in ["0.103.15", "0.103.13", "0.102.8", "0.101.7", "0.104.0-alpha.7", "garbage", ""] {
+        for v in [
+            "0.103.15",
+            "0.103.13",
+            "0.102.8",
+            "0.101.7",
+            "0.104.0-alpha.7",
+            "garbage",
+            "",
+        ] {
             assert!(!fixed(v), "{v}");
         }
     }
@@ -216,7 +248,9 @@ mod mitigation_tests {
 /// Electron releases that block the compromised keys (GHSA-jr5w-w6x2-84p9).
 pub fn electron_blocks_compromised_keys(version: &str) -> bool {
     use semver::Version;
-    let Ok(v) = Version::parse(version) else { return false };
+    let Ok(v) = Version::parse(version) else {
+        return false;
+    };
     let at_least = |s: &str| v >= Version::parse(s).unwrap();
     match v.major {
         42 => at_least("42.11.16"),
@@ -232,7 +266,11 @@ pub fn go_blocks_compromised_keys(version: &str) -> bool {
     use semver::Version;
     let v = version.trim_start_matches("go");
     let parts: Vec<u64> = v.split('.').map(|p| p.parse().unwrap_or(0)).collect();
-    let v = Version::new(parts.first().copied().unwrap_or(0), parts.get(1).copied().unwrap_or(0), parts.get(2).copied().unwrap_or(0));
+    let v = Version::new(
+        parts.first().copied().unwrap_or(0),
+        parts.get(1).copied().unwrap_or(0),
+        parts.get(2).copied().unwrap_or(0),
+    );
     match (v.major, v.minor) {
         (1, 26) => v >= Version::new(1, 26, 10),
         (1, 27) => v >= Version::new(1, 27, 3),
@@ -247,7 +285,14 @@ mod version_rule_tests {
 
     #[test]
     fn tp_fixed_electron_and_go() {
-        for v in ["42.11.16", "43.8.1", "44.9.1", "44.10.0", "45.0.0-beta.6", "46.0.0"] {
+        for v in [
+            "42.11.16",
+            "43.8.1",
+            "44.9.1",
+            "44.10.0",
+            "45.0.0-beta.6",
+            "46.0.0",
+        ] {
             assert!(electron_blocks_compromised_keys(v), "{v}");
         }
         for v in ["1.26.10", "1.27.3", "go1.27.4", "1.28", "1.28.0"] {
@@ -257,7 +302,14 @@ mod version_rule_tests {
 
     #[test]
     fn fp_unfixed_electron_and_go() {
-        for v in ["42.11.15", "43.8.0", "44.4.5", "45.0.0-beta.5", "41.9.9", "garbage"] {
+        for v in [
+            "42.11.15",
+            "43.8.0",
+            "44.4.5",
+            "45.0.0-beta.5",
+            "41.9.9",
+            "garbage",
+        ] {
             assert!(!electron_blocks_compromised_keys(v), "{v}");
         }
         for v in ["1.26.9", "1.27.2", "1.25.10", "1.26"] {

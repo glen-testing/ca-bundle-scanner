@@ -62,13 +62,24 @@ struct MetaDepKind {
 
 fn from_cargo_metadata(manifest: &Path, include_dev: bool) -> Result<ParsedLock> {
     let out = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--locked", "--manifest-path"])
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--locked",
+            "--manifest-path",
+        ])
         .arg(manifest)
         .output()
         .context("running cargo metadata")?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        bail!("{}", err.lines().find(|l| l.contains("error")).unwrap_or(err.trim()));
+        bail!(
+            "{}",
+            err.lines()
+                .find(|l| l.contains("error"))
+                .unwrap_or(err.trim())
+        );
     }
     let meta: Metadata = serde_json::from_slice(&out.stdout).context("parsing cargo metadata")?;
     build_from_metadata(meta, include_dev)
@@ -87,9 +98,13 @@ fn build_from_metadata(meta: Metadata, include_dev: bool) -> Result<ParsedLock> 
             graph.add_edge(graph.root, idx);
         }
     }
-    let resolve = meta.resolve.context("cargo metadata returned no resolve graph")?;
+    let resolve = meta
+        .resolve
+        .context("cargo metadata returned no resolve graph")?;
     for node in &resolve.nodes {
-        let Some(&from) = ids.get(&node.id) else { continue };
+        let Some(&from) = ids.get(&node.id) else {
+            continue;
+        };
         for d in &node.deps {
             let runtime = d.dep_kinds.iter().any(|k| match k.kind.as_deref() {
                 None => true,
@@ -101,7 +116,11 @@ fn build_from_metadata(meta: Metadata, include_dev: bool) -> Result<ParsedLock> 
             }
         }
     }
-    Ok(ParsedLock { graph, evidence: Evidence::RuntimeDependencyPath, notes: vec![] })
+    Ok(ParsedLock {
+        graph,
+        evidence: Evidence::RuntimeDependencyPath,
+        notes: vec![],
+    })
 }
 
 fn from_lockfile(path: &Path) -> Result<ParsedLock> {
@@ -109,7 +128,11 @@ fn from_lockfile(path: &Path) -> Result<ParsedLock> {
         .with_context(|| format!("failed to parse {}", path.display()))?;
     let mut graph = DepGraph::new(ResolvedDep::new("(workspace)", "", Ecosystem::Rust));
     for pkg in &lockfile.packages {
-        let idx = graph.add_dep(ResolvedDep::new(pkg.name.as_str(), &pkg.version.to_string(), Ecosystem::Rust));
+        let idx = graph.add_dep(ResolvedDep::new(
+            pkg.name.as_str(),
+            &pkg.version.to_string(),
+            Ecosystem::Rust,
+        ));
         // Workspace members are the only packages without a source.
         if pkg.source.is_none() {
             graph.add_edge(graph.root, idx);
@@ -125,7 +148,11 @@ fn from_lockfile(path: &Path) -> Result<ParsedLock> {
             }
         }
     }
-    Ok(ParsedLock { graph, evidence: Evidence::LockfileGraph, notes: vec![] })
+    Ok(ParsedLock {
+        graph,
+        evidence: Evidence::LockfileGraph,
+        notes: vec![],
+    })
 }
 
 #[cfg(test)]
@@ -133,11 +160,17 @@ mod tests {
     use super::*;
 
     fn fixture(p: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(p)
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(p)
     }
 
     fn chain(p: &ParsedLock, name: &str) -> Vec<Option<Vec<String>>> {
-        p.graph.find_all(name).iter().map(|&i| p.graph.path_to(i)).collect()
+        p.graph
+            .find_all(name)
+            .iter()
+            .map(|&i| p.graph.path_to(i))
+            .collect()
     }
 
     #[test]
@@ -168,7 +201,12 @@ mod tests {
     #[test]
     fn tp_lockfile_multi_member_workspace() {
         let p = from_lockfile(&fixture("cargo_two_webpki/Cargo.lock")).unwrap();
-        let members: Vec<_> = p.graph.graph.neighbors(p.graph.root).map(|i| p.graph.label(i)).collect();
+        let members: Vec<_> = p
+            .graph
+            .graph
+            .neighbors(p.graph.root)
+            .map(|i| p.graph.label(i))
+            .collect();
         assert_eq!(members.len(), 2, "{members:?}");
     }
 
@@ -180,7 +218,11 @@ mod tests {
             manifest_path: PathBuf::from(format!("/src/{name}/Cargo.toml")),
         };
         Metadata {
-            packages: vec![pkg("app", "app"), pkg("reqwest", "reqwest"), pkg("wp", "webpki-roots")],
+            packages: vec![
+                pkg("app", "app"),
+                pkg("reqwest", "reqwest"),
+                pkg("wp", "webpki-roots"),
+            ],
             workspace_members: vec!["app".into()],
             resolve: Some(MetaResolve {
                 nodes: vec![
@@ -188,12 +230,17 @@ mod tests {
                         id: "app".into(),
                         deps: vec![MetaDep {
                             pkg: "reqwest".into(),
-                            dep_kinds: vec![MetaDepKind { kind: dep_kind.map(String::from) }],
+                            dep_kinds: vec![MetaDepKind {
+                                kind: dep_kind.map(String::from),
+                            }],
                         }],
                     },
                     MetaNode {
                         id: "reqwest".into(),
-                        deps: vec![MetaDep { pkg: "wp".into(), dep_kinds: vec![MetaDepKind { kind: None }] }],
+                        deps: vec![MetaDep {
+                            pkg: "wp".into(),
+                            dep_kinds: vec![MetaDepKind { kind: None }],
+                        }],
                     },
                 ],
             }),
@@ -205,7 +252,10 @@ mod tests {
         let p = build_from_metadata(meta(None), false).unwrap();
         assert!(chain(&p, "webpki-roots")[0].is_some());
         let wp = p.graph.find_unique("webpki-roots").unwrap();
-        assert_eq!(p.graph.graph[wp].location.as_deref(), Some(Path::new("/src/webpki-roots")));
+        assert_eq!(
+            p.graph.graph[wp].location.as_deref(),
+            Some(Path::new("/src/webpki-roots"))
+        );
     }
 
     #[test]

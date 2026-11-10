@@ -4,8 +4,18 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 const SKIP_DIRS: &[&str] = &[
-    ".git", "node_modules", "target", ".venv", "venv", "__pycache__", "site-packages", ".tox",
-    "vendor", "deps", "_build", "local",
+    ".git",
+    "node_modules",
+    "target",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "site-packages",
+    ".tox",
+    "vendor",
+    "deps",
+    "_build",
+    "local",
 ];
 
 pub fn ecosystem_for_lockfile(path: &Path) -> Result<Ecosystem> {
@@ -30,13 +40,16 @@ pub fn detect_lockfiles(dir: &Path, excludes: &[String]) -> Result<Vec<(PathBuf,
         bail!("not a directory: {}", dir.display());
     }
     let mut found = Vec::new();
-    let walker = WalkDir::new(dir).sort_by_file_name().into_iter().filter_entry(|e| {
-        e.depth() == 0
-            || !e.file_type().is_dir()
-            || e.file_name().to_str().is_some_and(|n| {
-                !SKIP_DIRS.contains(&n) && !excludes.iter().any(|x| x == n)
-            })
-    });
+    let walker = WalkDir::new(dir)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|e| {
+            e.depth() == 0
+                || !e.file_type().is_dir()
+                || e.file_name()
+                    .to_str()
+                    .is_some_and(|n| !SKIP_DIRS.contains(&n) && !excludes.iter().any(|x| x == n))
+        });
     for entry in walker {
         let entry = entry?;
         if entry.file_type().is_file() {
@@ -61,8 +74,14 @@ mod tests {
 
     #[test]
     fn ecosystem_lookup() {
-        assert_eq!(ecosystem_for_lockfile(Path::new("/x/Cargo.lock")).unwrap(), Ecosystem::Rust);
-        assert_eq!(ecosystem_for_lockfile(Path::new("requirements-prod.txt")).unwrap(), Ecosystem::Python);
+        assert_eq!(
+            ecosystem_for_lockfile(Path::new("/x/Cargo.lock")).unwrap(),
+            Ecosystem::Rust
+        );
+        assert_eq!(
+            ecosystem_for_lockfile(Path::new("requirements-prod.txt")).unwrap(),
+            Ecosystem::Python
+        );
         assert!(ecosystem_for_lockfile(Path::new("notes.txt")).is_err());
         assert!(ecosystem_for_lockfile(Path::new("unknown.lock")).is_err());
     }

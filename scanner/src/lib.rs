@@ -2,6 +2,7 @@
 //! stores, bundles, binaries and archives.
 
 pub mod builtin;
+pub mod deps;
 pub mod der;
 pub mod detect;
 pub mod literal;
@@ -41,6 +42,8 @@ pub struct Config {
     pub jobs: usize,
     pub env: locations::Env,
     pub os: String,
+    /// Dependency analysis of `-p` project folders that hold lockfiles.
+    pub deps: deps::Options,
 }
 
 /// Directory names never descended into by the home scan.
@@ -460,12 +463,66 @@ pub fn run(cfg: &Config, progress: &mut dyn FnMut(&LocationResult)) -> Report {
         report.locations.push(lr);
     }
 
+    if cfg.deps.mode != deps::Mode::Off {
+        for p in cfg.paths.iter().filter(|p| deps::has_lockfiles(p)) {
+            let o = deps::analyse(p, &cfg.deps, &cfg.profile, &cfg.limits, &inspect_bundle);
+            report.dependencies.extend(o.deps);
+            report.findings.extend(o.findings);
+            report.issues.extend(o.issues);
+        }
+    }
+
     #[cfg(windows)]
     if cfg.system && cfg.root.is_none() {
         winstore::scan(&cfg.profile, &cfg.limits, &mut report, progress);
     }
 
     finish(report)
+}
+
+/// Scan one downloaded dependency bundle (file or folder) for the deep scan. Plain
+/// file scanning only: dependency analysis is not re-entered from here.
+fn inspect_bundle(path: &Path, profile: &Profile, limits: &Limits) -> deps::Inspection {
+    let walk = expand(
+        &locations::explicit("dependency bundle", path, EXPLICIT_DEPTH),
+        false,
+    );
+    let mut results = scan_files(&walk.files, profile, limits, 1);
+    let onecrl: Vec<String> = results.iter().flat_map(|r| r.onecrl.clone()).collect();
+    let mut findings = Vec::new();
+    let mut errors: Vec<String> = walk
+        .issues
+        .iter()
+        .filter(|i| i.severity == Severity::Error)
+        .map(|i| i.message.clone())
+        .collect();
+    for r in &mut results {
+        scan::mitigate_nss_with_onecrl(&mut r.findings, &onecrl);
+        findings.append(&mut r.findings);
+        errors.extend(
+            r.issues
+                .iter()
+                .filter(|i| i.severity == Severity::Error)
+                .map(|i| i.message.clone()),
+        );
+    }
+    let found = findings.iter().any(|f| f.action_required);
+    if !found && (!errors.is_empty() || walk.files.is_empty()) {
+        return Err(format!(
+            "{} could not be fully inspected: {}",
+            path.display(),
+            errors.join("; ")
+        ));
+    }
+    let certs = findings
+        .iter()
+        .filter_map(|f| {
+            serde_json::to_value(f)
+                .ok()
+                .and_then(|v| serde_json::from_value(v).ok())
+        })
+        .collect();
+    Ok((if found { "found" } else { "clean" }.to_string(), certs))
 }
 
 fn finish(mut report: Report) -> Report {

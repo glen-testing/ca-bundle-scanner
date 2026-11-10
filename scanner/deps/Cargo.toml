@@ -2,7 +2,8 @@
 name = "ca-certs-in-code"
 version = "0.2.0"
 edition = "2021"
-description = "Find bundled CA certificate stores in project dependencies, check runtime reachability, and inspect their contents"
+description = "Dependency analysis for ca-bundle-scanner: bundled CA stores in project dependencies and their runtime reachability"
+publish = false
 
 [dependencies]
 cargo-lock = "11"
@@ -10,11 +11,6 @@ petgraph = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
-clap = { version = "4", features = ["derive"] }
 walkdir = "2"
 anyhow = "1"
 semver = "1"
-
-[profile.release]
-opt-level = 2
-lto = "thin"

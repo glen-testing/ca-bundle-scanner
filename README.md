@@ -86,6 +86,11 @@ reported but changes nothing.
       --root <DIR>               resolve system locations under DIR (unpacked image, mounted disk)
       --no-system                skip the built-in locations
       --jobs <N>                 files scanned in parallel (default: CPUs, at most 4)
+    Dependency analysis of -p folders with lockfiles:
+      --no-deps                  skip it
+      --deps-online              resolve and download bundling dependencies, then scan them
+      --deps-include-dev         also follow development-only dependencies
+      --deps-cache-dir <DIR>     where downloaded packages are kept
     Output:
       -q, --quiet                result and findings only
       -j, --json                 one JSON document on stdout (schema 2)
@@ -106,6 +111,29 @@ section (text) and in `items` (JSON):
 
 These are signals of capability found in the bytes, not proof of which path a
 given connection takes. A CA bundle file scanned directly shows as `bundled`.
+
+### Dependency analysis
+
+A `-p` folder holding lockfiles (Cargo.lock, package-lock.json, uv.lock,
+poetry.lock, Pipfile.lock, requirements*.txt, go.mod, Gemfile.lock,
+composer.lock, mix.lock, rebar.lock, cpanfile.snapshot) also gets its
+dependencies checked for packages that ship their own CA store: certifi,
+grpcio, httplib2, botocore, webpki-roots, webpki-root-certs, ssl-root-cas,
+Electron (counted even as a devDependency, because it ships in the app), Go
+x509roots/fallback, excon, composer/ca-bundle, castore, Erlang certifi and
+Mozilla-CA. Each is listed in a `DEPENDENCIES` section (text) and in
+`dependencies` (JSON) with its dependency chain, whether it is reachable at
+runtime, and any mitigation (rustls-webpki 0.103.16+, patched Electron, Go
+toolchain 1.26.10+ / 1.27.3+).
+
+By default this reads lockfiles only, with no network, and the results are
+informational. With `--deps-online` the scanner resolves the full dependency
+set (cargo metadata, uv), downloads each bundling package once per run and
+scans it with the same certificate matching as everything else; a reachable,
+unmitigated package whose bundle holds an affected certificate needs action
+(exit 1). Downloaded packages are scanned as plain files, never analysed for
+their own dependencies, so the analysis cannot recurse. This was formerly the
+separate `ca-certs-in-code` tool; its history is kept in `scanner/deps`.
 
 ### Exit codes
 
@@ -161,8 +189,9 @@ when nothing else was found), and the part already decompressed is scanned.
 ## Development
 
     cd scanner
-    cargo fmt --check && cargo clippy --release --all-targets -- -D warnings
-    cargo test --release            # unit + end-to-end tests, no network
+    cargo fmt --all --check && cargo clippy --release --workspace --all-targets -- -D warnings
+    cargo test --release --workspace                    # unit + end-to-end tests, no network
+    cargo test --release --workspace -- --include-ignored  # plus registry/PyPI tests (network, uv)
     tests/data/gen.sh               # regenerate OpenSSL-built test fixtures
     scripts/refresh-certs.sh        # re-download built-in certs from crt.sh and compare
 

@@ -6,7 +6,8 @@ use std::path::Path;
 /// Bundler `Gemfile.lock`: `specs:` entries (4-space indent) with their dependencies
 /// (6-space indent); `DEPENDENCIES` lists the Gemfile's direct gems.
 pub fn parse(path: &Path) -> Result<ParsedLock> {
-    let content = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     Ok(parse_str(&content))
 }
 
@@ -52,7 +53,10 @@ fn parse_str(content: &str) -> ParsedLock {
         }
     }
     for (from, to) in edges {
-        let (Some(&f), Some(&t)) = (graph.find_all(&from).first(), graph.find_all(&to).first()) else { continue };
+        let (Some(&f), Some(&t)) = (graph.find_all(&from).first(), graph.find_all(&to).first())
+        else {
+            continue;
+        };
         graph.add_edge(f, t);
     }
     if direct.is_empty() {
@@ -64,7 +68,11 @@ fn parse_str(content: &str) -> ParsedLock {
         }
     }
     // Gemfile groups (development/test) are not recorded in the lockfile.
-    ParsedLock { graph, evidence: Evidence::LockfileGraph, notes: vec![] }
+    ParsedLock {
+        graph,
+        evidence: Evidence::LockfileGraph,
+        notes: vec![],
+    }
 }
 
 #[cfg(test)]
@@ -76,14 +84,23 @@ mod tests {
     #[test]
     fn tp_transitive_excon_chain() {
         let p = parse_str(LOCK);
-        let c = p.graph.path_to(p.graph.find_unique("excon").unwrap()).unwrap();
+        let c = p
+            .graph
+            .path_to(p.graph.find_unique("excon").unwrap())
+            .unwrap();
         assert_eq!(c, vec!["(Gemfile)", "fog-core 2.6.0", "excon 1.7.3"]);
-        assert_eq!(p.graph.graph[p.graph.find_unique("nokogiri").unwrap()].version, "1.16.0");
+        assert_eq!(
+            p.graph.graph[p.graph.find_unique("nokogiri").unwrap()].version,
+            "1.16.0"
+        );
     }
 
     #[test]
     fn fp_gem_not_in_dependency_tree() {
         let p = parse_str(&LOCK.replace("      excon (~> 1.0)\n", ""));
-        assert!(p.graph.path_to(p.graph.find_unique("excon").unwrap()).is_none());
+        assert!(p
+            .graph
+            .path_to(p.graph.find_unique("excon").unwrap())
+            .is_none());
     }
 }

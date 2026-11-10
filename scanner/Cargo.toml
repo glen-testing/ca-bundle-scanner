@@ -1,6 +1,6 @@
 [package]
 name = "ca-bundle-scanner"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Find compromised or distrusted CA certificates in trust stores, bundles, binaries and archives"
@@ -13,7 +13,11 @@ path = "src/lib.rs"
 name = "ca-bundle-scanner"
 path = "src/main.rs"
 
+[workspace]
+members = ["deps"]
+
 [dependencies]
+ca-certs-in-code = { path = "deps" }
 aho-corasick = "1"
 # Default backend is libbz2-rs-sys (pure Rust): no C build, still static on musl.
 bzip2 = "0.6"
