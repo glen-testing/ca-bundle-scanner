@@ -170,7 +170,7 @@ dependencies = [
 
 [[package]]
 name = "ca-bundle-scanner"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "aho-corasick",
  "assert_cmd",
