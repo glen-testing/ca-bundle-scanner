@@ -10,7 +10,7 @@ on:
         description: "Existing version tag to build, e.g. v0.4.0 (must match scanner/Cargo.toml)"
         required: true
       platforms:
-        description: "Comma-separated platforms to build: macos"
+        description: "Comma-separated platforms to build: macos, windows, linux"
         required: true
         default: macos
 
@@ -30,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       macos: ${{ steps.plat.outputs.macos }}
+      windows: ${{ steps.plat.outputs.windows }}
+      linux: ${{ steps.plat.outputs.linux }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,15 +44,14 @@ jobs:
         env:
           PLATFORMS: ${{ inputs.platforms }}
         run: |
-          for p in macos; do
+          for p in macos windows linux; do
             case ",${PLATFORMS// /}," in *",$p,"*) v=true;; *) v=false;; esac
             echo "$p=$v" >> "$GITHUB_OUTPUT"
           done
-      - name: Create release if missing
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 && exit 0
           cat > notes.md <<EOF
           ca-bundle-scanner ${TAG#v}: scans trust stores, files, archives and binaries for
           the certificates in the October 2026 eMudhra compromise (\`--profile emudhra\`).
@@ -58,12 +59,17 @@ jobs:
           Each archive has a matching \`.sha256\` file. Exit codes: 0 clean, 1 action
           required, 2 usage error, 3 incomplete. See README.md for options.
 
-          **macOS:** the binary is universal (Apple Silicon and Intel) and ad-hoc signed,
-          not notarized. If you download it with a browser, clear the quarantine flag
-          before the first run: \`xattr -d com.apple.quarantine ca-bundle-scanner\`.
-          Downloads with \`gh release download\` or \`curl\` are not quarantined.
+          | Platform | Archive | Notes |
+          |---|---|---|
+          | macOS (Apple Silicon and Intel) | \`*-macos-universal.tar.gz\` | ad-hoc signed, not notarized: after a browser download run \`xattr -d com.apple.quarantine ca-bundle-scanner\` (not needed with \`gh release download\` or \`curl\`) |
+          | Windows x86-64 / ARM64 | \`*-windows-x86_64.zip\`, \`*-windows-arm64.zip\` | not code-signed: SmartScreen may warn on first run (More info, Run anyway) |
+          | Linux x86-64 / ARM64 | \`*-linux-x86_64.tar.gz\`, \`*-linux-arm64.tar.gz\` | statically linked (musl): runs on any distribution |
           EOF
-          gh release create "$TAG" --verify-tag --title "ca-bundle-scanner $TAG" --notes-file notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" --verify-tag --title "ca-bundle-scanner $TAG" --notes-file notes.md
+          fi
 
   macos:
     name: macOS universal binary
@@ -120,5 +126,130 @@ jobs:
           cp dist/ca-bundle-scanner ../README.md "pkg/$name/"
           tar -C pkg -czf "$name.tar.gz" "$name"
           shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          cat "$name.tar.gz.sha256"
+          gh release upload "$TAG" "$name.tar.gz" "$name.tar.gz.sha256" --clobber
+
+  windows:
+    name: Windows ${{ matrix.arch }}
+    needs: prepare
+    if: needs.prepare.outputs.windows == 'true'
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
+    defaults:
+      run:
+        working-directory: scanner
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Test
+        if: matrix.arch == 'x86_64'
+        run: cargo test --release --locked
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Verify and smoke run against the Windows certificate store
+        if: matrix.arch == 'x86_64'
+        run: |
+          bin=target/${{ matrix.target }}/release/ca-bundle-scanner.exe
+          [ "$($bin --version | tr -d '\r')" = "ca-bundle-scanner ${TAG#v}" ]
+          set +e
+          $bin --profile emudhra --json > scan.json
+          code=$?
+          set -e
+          [ "$code" -le 3 ] && [ "$code" -ne 2 ]
+          python -c "
+          import json, sys
+          r = json.load(open('scan.json'))
+          hits = [l for l in r['locations'] if l['status'] == 'scanned'
+                  and l['label'].startswith('Windows certificate store') and l['files'] > 0]
+          sys.exit(0 if hits else 1)
+          "
+      - name: Package and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name="ca-bundle-scanner-${TAG}-windows-${{ matrix.arch }}"
+          mkdir -p "pkg/$name"
+          cp target/${{ matrix.target }}/release/ca-bundle-scanner.exe ../README.md "pkg/$name/"
+          (cd pkg && 7z a -tzip "../$name.zip" "$name" > /dev/null)
+          sha256sum "$name.zip" > "$name.zip.sha256"
+          cat "$name.zip.sha256"
+          gh release upload "$TAG" "$name.zip" "$name.zip.sha256" --clobber
+
+  linux:
+    name: Linux ${{ matrix.arch }} (static)
+    needs: prepare
+    if: needs.prepare.outputs.linux == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+          - arch: arm64
+            target: aarch64-unknown-linux-musl
+    defaults:
+      run:
+        working-directory: scanner
+    env:
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Cross linker
+        if: matrix.arch == 'arm64'
+        run: sudo apt-get update -q && sudo apt-get install -yq gcc-aarch64-linux-gnu
+      - name: Test
+        if: matrix.arch == 'x86_64'
+        run: cargo test --release --locked
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Verify static binary
+        run: |
+          bin=target/${{ matrix.target }}/release/ca-bundle-scanner
+          file "$bin"
+          file "$bin" | grep -q 'statically linked\|static-pie linked'
+      - name: Smoke run against the runner's trust stores
+        if: matrix.arch == 'x86_64'
+        run: |
+          bin=target/${{ matrix.target }}/release/ca-bundle-scanner
+          [ "$($bin --version)" = "ca-bundle-scanner ${TAG#v}" ]
+          set +e
+          $bin --profile emudhra --json > scan.json
+          code=$?
+          set -e
+          [ "$code" -le 3 ] && [ "$code" -ne 2 ]
+          python3 -c "
+          import json, sys
+          r = json.load(open('scan.json'))
+          hits = [l for l in r['locations'] if l['status'] == 'scanned' and l['files'] > 0
+                  and l['path'].startswith('/etc/ssl')]
+          sys.exit(0 if hits else 1)
+          "
+      - name: Package and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name="ca-bundle-scanner-${TAG}-linux-${{ matrix.arch }}"
+          mkdir -p "pkg/$name"
+          cp target/${{ matrix.target }}/release/ca-bundle-scanner ../README.md "pkg/$name/"
+          tar -C pkg -czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
           cat "$name.tar.gz.sha256"
           gh release upload "$TAG" "$name.tar.gz" "$name.tar.gz.sha256" --clobber
