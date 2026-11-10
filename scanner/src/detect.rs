@@ -66,6 +66,42 @@ pub fn is_ole2(data: &[u8]) -> bool {
     data.starts_with(&[0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])
 }
 
+/// SquashFS v4 superblock (snap packages; AppImages carry one after an ELF runtime).
+pub fn has_squashfs(data: &[u8]) -> bool {
+    let window = &data[..data.len().min(16 << 20)];
+    memchr::memmem::find_iter(window, b"hsqs").any(|o| {
+        let Some(sb) = data.get(o..o + 32) else {
+            return false;
+        };
+        let u16_at = |i: usize| u16::from_le_bytes([sb[i], sb[i + 1]]);
+        let block = u32::from_le_bytes([sb[12], sb[13], sb[14], sb[15]]);
+        (1..=6).contains(&u16_at(20))
+            && u16_at(28) == 4
+            && block.is_power_of_two()
+            && (4096..=1 << 20).contains(&block)
+            && 1u32.checked_shl(u16_at(22) as u32) == Some(block)
+    })
+}
+
+/// Installer formats whose payload is compressed with schemes this scanner does not unpack.
+/// Requires a Windows executable plus the format's own header, so tools that merely
+/// mention the signatures (7-Zip, innoextract) are not mistaken for installers.
+pub fn installer_kind(data: &[u8]) -> Option<&'static str> {
+    if !data.starts_with(b"MZ") {
+        return None;
+    }
+    // NSIS first header: u32 flags, 0xDEADBEEF, "NullsoftInst", on a 512-byte boundary.
+    let nsis =
+        memchr::memmem::find_iter(data, b"\xef\xbe\xad\xdeNullsoftInst").any(|o| o % 512 == 4);
+    if nsis {
+        return Some("NSIS installer");
+    }
+    let sig = b"Inno Setup Setup Data (";
+    let inno = memchr::memmem::find_iter(data, sig)
+        .any(|o| data.get(o + sig.len()).is_some_and(u8::is_ascii_digit));
+    inno.then_some("Inno Setup installer")
+}
+
 pub fn has_upx(data: &[u8]) -> bool {
     memchr::memmem::find(&data[..data.len().min(4096)], b"UPX!").is_some()
 }
@@ -94,6 +130,43 @@ mod tests {
         t[8..12].copy_from_slice(&[0, 0, 2, 0]);
         d.extend_from_slice(&t);
         assert!(is_dmg(&d));
+    }
+
+    #[test]
+    fn installers_and_squashfs() {
+        let mut nsis = b"MZ".to_vec();
+        nsis.resize(512, 0);
+        nsis.extend_from_slice(&[0, 0, 0, 0]);
+        nsis.extend_from_slice(b"\xef\xbe\xad\xdeNullsoftInst");
+        assert_eq!(installer_kind(&nsis), Some("NSIS installer"));
+        // fp: same bytes off the 512-byte boundary, or without an MZ header (e.g. inside 7-Zip).
+        let mut off = b"MZ".to_vec();
+        off.resize(700, 0);
+        off.extend_from_slice(b"\xef\xbe\xad\xdeNullsoftInst");
+        assert_eq!(installer_kind(&off), None);
+        assert_eq!(installer_kind(&nsis[2..]), None);
+        assert_eq!(
+            installer_kind(b"MZ...Inno Setup Setup Data (6.2.0)"),
+            Some("Inno Setup installer")
+        );
+        assert_eq!(installer_kind(b"MZ...Inno Setup Setup Data (%s"), None);
+
+        let mut sq = vec![0u8; 64];
+        sq[..4].copy_from_slice(b"hsqs");
+        sq[12..16].copy_from_slice(&131072u32.to_le_bytes());
+        sq[20..22].copy_from_slice(&6u16.to_le_bytes()); // zstd
+        sq[22..24].copy_from_slice(&17u16.to_le_bytes());
+        sq[28..30].copy_from_slice(&4u16.to_le_bytes());
+        let mut appimage = b"\x7fELF".to_vec();
+        appimage.resize(4096, 0);
+        appimage.extend_from_slice(&sq);
+        assert!(has_squashfs(&appimage));
+        // fp: the magic alone, or with an inconsistent block size.
+        assert!(!has_squashfs(
+            b"....hsqs........................................"
+        ));
+        sq[22..24].copy_from_slice(&16u16.to_le_bytes());
+        assert!(!has_squashfs(&sq));
     }
 
     #[test]

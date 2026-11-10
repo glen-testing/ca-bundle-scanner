@@ -26,7 +26,7 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             max_depth: 5,
-            max_decompressed: 512 << 20,
+            max_decompressed: 2 << 30,
             max_entries: 100_000,
             hash_budget_base: 256 << 20,
             max_file: 4 << 30,
@@ -492,22 +492,20 @@ impl<'a> FileScan<'a> {
 
     /// Non-container data: PEM blocks, raw DER, base64 runs, text references.
     fn leaf(&mut self, data: &[u8], path: &str, depth: u32) {
-        if detect::is_ole2(data) {
-            self.warn(
-                path,
-                "OLE2/MSI compound file: compressed streams are not unpacked; raw bytes scanned"
-                    .into(),
-            );
-        }
-        if detect::is_dmg(data) {
-            self.warn(path, "Apple disk image: compressed partitions are not unpacked; raw bytes scanned (mount it and scan with -p for full coverage)".into());
-        }
-        if detect::has_upx(data) {
-            self.warn(
-                path,
-                "UPX-packed binary: run `upx -d` for full coverage; raw bytes scanned".into(),
-            );
-        }
+        // Opaque formats: raw bytes are still scanned, but a clean result proves nothing.
+        let opaque: Option<String> = if detect::has_squashfs(data) {
+            Some("SquashFS image (AppImage or snap): compressed filesystem not unpacked; extract it (`./App.AppImage --appimage-extract` or `unsquashfs`) and scan the folder with -p".into())
+        } else if let Some(kind) = detect::installer_kind(data) {
+            Some(format!("{kind}: compressed payload not unpacked; extract it (`7z x`, or `innoextract` for Inno Setup) or install it and scan the install folder with -p"))
+        } else if detect::is_ole2(data) {
+            Some("OLE2/MSI compound file: compressed streams are not unpacked; raw bytes scanned (extract with `msiextract` or `7z x` and scan the folder with -p)".into())
+        } else if detect::is_dmg(data) {
+            Some("Apple disk image: compressed partitions are not unpacked; raw bytes scanned (mount it and scan with -p for full coverage)".into())
+        } else if detect::has_upx(data) {
+            Some("UPX-packed binary: run `upx -d` for full coverage; raw bytes scanned".into())
+        } else {
+            None
+        };
         let found_before = self.findings.len();
         if !data.starts_with(b"PK") && detect::has_trailing_zip(data) {
             self.scan_zip(data, path, depth);
@@ -617,6 +615,66 @@ impl<'a> FileScan<'a> {
                 "password-protected PKCS#12: encrypted certificate bags not inspected".into(),
             );
         }
+        self.apply_key_blocklist(data, path, found_before);
+        if let Some(msg) = opaque {
+            if self.findings.len() == found_before {
+                self.error(path, msg);
+            } else {
+                self.warn(path, msg);
+            }
+        }
+    }
+
+    /// A binary that carries the SPKI SHA-256 of every compromised key (Chromium's
+    /// compiled-in blocklist, e.g. patched Electron) rejects those chains, so its root
+    /// and compromised-CA hits stop needing action. A partial list changes nothing.
+    fn apply_key_blocklist(&mut self, data: &[u8], path: &str, from: usize) {
+        let (by_hash, by_der, total) = self
+            .profile
+            .blocked_keys(data, |s, e| enclosing_cert(data, s, e).is_none());
+        let blocked = (0..total).filter(|&i| by_hash[i] || by_der[i]).count();
+        if blocked == 0 {
+            return;
+        }
+        let complete = blocked == total;
+        let needs_action = self.findings[from..].iter().any(|f| f.action_required);
+        if !complete && !needs_action {
+            return;
+        }
+        if complete {
+            for f in &mut self.findings[from..] {
+                let chain_kind = matches!(
+                    f.kind,
+                    Kind::DistrustedRoot
+                        | Kind::CrossSignRoot
+                        | Kind::Compromised
+                        | Kind::IssuedByCompromised
+                );
+                if chain_kind && f.action_required {
+                    f.context = Context::KeyBlocklist;
+                    f.action_required = false;
+                }
+            }
+        }
+        let form = match (by_hash.contains(&true), by_der.contains(&true)) {
+            (true, true) => "SPKI SHA-256 and bare-SPKI distrust lists",
+            (true, false) => "SPKI SHA-256 blocklist",
+            _ => "bare-SPKI distrust list (as in rustls-webpki)",
+        };
+        let cert = if complete {
+            format!("{form} covering all {total} compromised keys")
+        } else {
+            format!("partial {form}: {blocked} of {total} compromised keys (not a mitigation)")
+        };
+        self.push(
+            path,
+            "DER/binary",
+            cert,
+            None,
+            Kind::Reference,
+            Match::Blocklist,
+            None,
+        );
     }
 
     /// Exact-certificate hashes plus key / SKI needles over DER-ish bytes.
