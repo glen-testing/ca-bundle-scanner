@@ -95,7 +95,7 @@ impl<'a> FileScan<'a> {
         };
         if c.is_ca() && c.subject() == c.issuer() && self.roots_seen.insert(sha256(der)) {
             self.trust.bundled_roots += 1;
-            let entry = path.rsplit(['/', ':']).next().unwrap_or(path);
+            let entry = basename(path);
             self.trust.add_bundle(format!("CA certificates in {entry}"));
         }
     }

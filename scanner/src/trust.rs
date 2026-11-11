@@ -231,7 +231,7 @@ pub fn scan_markers(data: &[u8], path: &str, tp: &mut TrustProfile) {
 
 /// Last two components of an archive entry path, for compact evidence.
 fn short(path: &str) -> String {
-    let parts: Vec<&str> = path.rsplit(['/', ':']).take(2).collect();
+    let parts: Vec<&str> = path.rsplit(['/', '\\', ':']).take(2).collect();
     parts.into_iter().rev().collect::<Vec<_>>().join("/")
 }
 
@@ -243,6 +243,17 @@ mod tests {
         let mut tp = TrustProfile::default();
         scan_markers(data, "app/bin", &mut tp);
         tp.finish("app")
+    }
+
+    #[test]
+    fn short_handles_windows_paths() {
+        assert_eq!(
+            short(r"C:\Program Files\Microsoft VS Code\Code.exe"),
+            "Microsoft VS Code/Code.exe"
+        );
+        assert_eq!(short(r"C:\apps\app.zip:lib/x.so"), "lib/x.so");
+        // FP: Unix and archive paths unchanged.
+        assert_eq!(short("/usr/share/code/code"), "code/code");
     }
 
     #[test]
