@@ -50,6 +50,13 @@ openssl x509 -in clean_leaf.pem -trustout -addtrust serverAuth -out trusted_clea
 # C13: ZipCrypto-encrypted ZIP holding the target.
 rm -f target_encrypted.zip && (cd "$T" && zip -q -P secret "$OLDPWD/target_encrypted.zip" target.pem)
 
+# N15: ZIP entries compressed with LZMA (method 14, as in Source-engine .bsp map
+# paks). The zip crate reads LZMA but cannot write it, so Python's zipfile does.
+python3 -I -c 'import sys, zipfile
+for src, out in zip(sys.argv[1::2], sys.argv[2::2]):
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_LZMA) as z:
+        z.write(src, "certs/ca.pem")' "$T/target.pem" lzma_target.zip clean_leaf.pem lzma_clean.zip
+
 # C24: a certificate larger than 8 KiB (many SANs), for --cert / --fingerprint tests.
 { printf 'subjectAltName='; seq 1 600 | sed 's/.*/DNS:host&.big.test/' | paste -sd, -; } > "$T/big.ext"
 openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj "/CN=big.test" \

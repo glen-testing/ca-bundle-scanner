@@ -2125,3 +2125,137 @@ fn n14_tp_fp_online_ruby_php_hex_perl() {
         }
     }
 }
+
+// ── N15: LZMA, XZ and PPMd ZIP entries (method 14, 95, 98) ──────────────
+
+fn zip_with(method: zip::CompressionMethod, entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default().compression_method(method);
+    for (n, b) in entries {
+        w.start_file(*n, opts).unwrap();
+        w.write_all(b).unwrap();
+    }
+    w.finish().unwrap().into_inner()
+}
+
+/// The zip crate cannot write LZMA (method 14); those come from `tests/data/gen.sh`.
+const N15_WRITABLE: [zip::CompressionMethod; 2] =
+    [zip::CompressionMethod::Xz, zip::CompressionMethod::Ppmd];
+
+#[test]
+fn n15_tp_lzma_xz_ppmd_zip_entries() {
+    let t = tempfile::tempdir().unwrap();
+    let mut zips = vec![("lzma.zip".to_string(), data("lzma_target.zip"))];
+    for m in N15_WRITABLE {
+        let z = zip_with(m, &[("certs/ca.pem", target_pem().as_bytes())]);
+        zips.push((format!("{m:?}.zip"), z));
+    }
+    for (name, z) in zips {
+        let o = scan(&[&write(t.path(), &name, z)]);
+        assert_found(&o);
+        assert!(has_sha(&o, TARGET_SHA), "{name}: {}", o.stdout);
+        assert!(errors(&o).is_empty(), "{name}: {:?}", errors(&o));
+    }
+}
+
+#[test]
+fn n15_fp_lzma_xz_ppmd_zip_entries_clean() {
+    let t = tempfile::tempdir().unwrap();
+    let mut zips = vec![("lzma.zip".to_string(), data("lzma_clean.zip"))];
+    for m in N15_WRITABLE {
+        let z = zip_with(m, &[("certs/ca.pem", clean_pem().as_bytes())]);
+        zips.push((format!("{m:?}.zip"), z));
+    }
+    for (name, z) in zips {
+        assert_clean(&scan(&[&write(t.path(), &name, z)]));
+    }
+}
+
+// ── N16: gzip followed by non-gzip data; gzip magic without a gzip header ──
+
+#[test]
+fn n16_tp_data_after_gzip_and_fake_gzip_magic_are_scanned() {
+    let t = tempfile::tempdir().unwrap();
+    // Save-game layout: a gzip member, then the application's own records.
+    let mut a = gzip(clean_pem().as_bytes());
+    a.extend_from_slice(b"\x00\x01RECORDS");
+    a.extend_from_slice(target_pem().as_bytes());
+    assert_found(&scan(&[&write(t.path(), "save.sav", a)]));
+    // Starts with the two gzip magic bytes but CM is not deflate: not gzip.
+    let mut b = vec![0x1f, 0x8b, 0x00, 0x00];
+    b.extend_from_slice(target_pem().as_bytes());
+    assert_found(&scan(&[&write(t.path(), "blob.bin", b)]));
+    // Multi-member gzip still reads every member (C12).
+    let mut c = gzip(clean_pem().as_bytes());
+    c.extend(gzip(target_pem().as_bytes()));
+    assert_found(&scan(&[&write(t.path(), "c.pem.gz", c)]));
+}
+
+#[test]
+fn n16_fp_data_after_gzip_is_not_an_error() {
+    let t = tempfile::tempdir().unwrap();
+    let mut a = gzip(clean_pem().as_bytes());
+    a.extend_from_slice(&[0xab; 4096]);
+    assert_clean(&scan(&[&write(t.path(), "save.sav", a)]));
+    let mut b = vec![0x1f, 0x8b, 0x00, 0x00];
+    b.extend_from_slice(clean_pem().as_bytes());
+    assert_clean(&scan(&[&write(t.path(), "blob.bin", b)]));
+    // A truncated real gzip member is still an error (exit 3), never clean.
+    let mut c = gzip(clean_pem().as_bytes());
+    c.truncate(c.len() / 2);
+    let o = scan(&[&write(t.path(), "cut.gz", c)]);
+    assert_eq!(o.code, 3, "{}", o.stdout);
+}
+
+// ── N17: "ustar" at offset 257 without a valid tar header ───────────────
+
+fn ustar_text(body: &str) -> Vec<u8> {
+    let mut v = b"var headers = require('./headers'); // ".to_vec();
+    v.resize(257, b' ');
+    v.extend_from_slice(b"ustar\0 is the magic; see ");
+    v.extend_from_slice(body.as_bytes());
+    v.resize(v.len().max(1024), b'\n');
+    v
+}
+
+#[test]
+fn n17_tp_text_with_ustar_is_scanned_and_real_tar_still_opened() {
+    let t = tempfile::tempdir().unwrap();
+    assert_found(&scan(&[&write(
+        t.path(),
+        "headers.js",
+        ustar_text(&target_pem()),
+    )]));
+    let tar = tar_of(&[("ca.pem", target_pem().as_bytes())]);
+    assert_found(&scan(&[&write(t.path(), "ca.tar", tar)]));
+}
+
+#[test]
+fn n17_fp_text_with_ustar_is_not_a_broken_tar() {
+    let t = tempfile::tempdir().unwrap();
+    assert_clean(&scan(&[&write(
+        t.path(),
+        "headers.js",
+        ustar_text("nothing"),
+    )]));
+}
+
+// ── N18: "UPX!" outside an executable is not a packed binary ────────────
+
+#[test]
+fn n18_tp_upx_executable_still_reported() {
+    let t = tempfile::tempdir().unwrap();
+    let mut exe = b"MZ".to_vec();
+    exe.resize(512, 0);
+    exe.extend_from_slice(b"UPX!");
+    exe.resize(8192, 0);
+    let o = scan(&[&write(t.path(), "packed.exe", exe)]);
+    assert_eq!(o.code, 3, "{}", o.stdout);
+}
+
+#[test]
+fn n18_fp_source_mentioning_upx_is_clean() {
+    let t = tempfile::tempdir().unwrap();
+    let src = "pub fn has_upx(d: &[u8]) -> bool { find(d, b\"UPX!\") }\n".repeat(20);
+    assert_clean(&scan(&[&write(t.path(), "detect.rs", src)]));
+}
