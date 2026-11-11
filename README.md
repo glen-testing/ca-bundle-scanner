@@ -133,7 +133,8 @@ source comments or concatenated strings, byte literals in source (`b"\x30.."`,
 webpki-roots and webpki-root-certs), and
 binaries (PEM strings and DER bytes regardless of architecture). Archives are
 unpacked recursively, up to 5 levels: ZIP/JAR/WAR/APK (including executable
-JARs with a script prefix), gzip (multi-member), bzip2 (`.bz2`, `.bz`,
+JARs with a script prefix; Deflate, Deflate64, bzip2, LZMA, XZ and PPMd
+entries), gzip (multi-member; data after the last member is scanned as is), bzip2 (`.bz2`, `.bz`,
 `.tbz`, `.tbz2`, multi-stream, and bzip2-compressed ZIP entries), xz, zstd,
 tar, ar/`.deb`, RPM (cpio payload) and Electron `.asar`. Formats are detected
 by content, not file name. Formats whose payload is not unpacked (SquashFS

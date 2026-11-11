@@ -17,7 +17,7 @@ pub fn container(data: &[u8]) -> Option<Container> {
     let starts = |m: &[u8]| data.starts_with(m);
     if starts(b"PK\x03\x04") || starts(b"PK\x05\x06") || starts(b"PK\x07\x08") {
         Some(Container::Zip)
-    } else if starts(&[0x1f, 0x8b]) {
+    } else if is_gzip(data) {
         Some(Container::Gzip)
     } else if starts(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
         Some(Container::Xz)
@@ -25,7 +25,7 @@ pub fn container(data: &[u8]) -> Option<Container> {
         Some(Container::Zstd)
     } else if is_bzip2(data) {
         Some(Container::Bzip2)
-    } else if data.len() > 262 && &data[257..262] == b"ustar" {
+    } else if is_tar(data) {
         Some(Container::Tar)
     } else if starts(b"!<arch>\n") {
         Some(Container::Ar)
@@ -36,6 +36,47 @@ pub fn container(data: &[u8]) -> Option<Container> {
     } else {
         None
     }
+}
+
+/// gzip member header (RFC 1952): magic, CM = 8 (deflate), reserved FLG bits clear.
+/// The two magic bytes alone occur by chance in binary data.
+pub fn is_gzip(data: &[u8]) -> bool {
+    data.len() >= 18 && data[..3] == [0x1f, 0x8b, 0x08] && data[3] & 0xe0 == 0
+}
+
+/// POSIX/GNU tar: "ustar" magic plus a valid header checksum, so text that happens
+/// to hold "ustar" at offset 257 (tar libraries, JSON) is not taken for an archive.
+fn is_tar(data: &[u8]) -> bool {
+    let Some(h) = data.get(..512) else {
+        return false;
+    };
+    if &h[257..262] != b"ustar" {
+        return false;
+    }
+    let digits: Vec<u8> = h[148..156]
+        .iter()
+        .copied()
+        .skip_while(|&b| b == b' ')
+        .take_while(u8::is_ascii_digit)
+        .collect();
+    if digits.is_empty() || digits.iter().any(|&d| d > b'7') {
+        return false;
+    }
+    let stored = digits
+        .iter()
+        .fold(0u32, |a, &d| (a << 3) | (d - b'0') as u32);
+    let sum: u32 = h
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| {
+            if (148..156).contains(&i) {
+                b' ' as u32
+            } else {
+                b as u32
+            }
+        })
+        .sum();
+    stored == sum
 }
 
 fn is_bzip2(data: &[u8]) -> bool {
@@ -102,8 +143,19 @@ pub fn installer_kind(data: &[u8]) -> Option<&'static str> {
     inno.then_some("Inno Setup installer")
 }
 
+/// UPX stub marker in the first 4 KiB of an executable (PE, ELF or Mach-O). Source
+/// files and tools that only mention "UPX!" are not packed binaries.
 pub fn has_upx(data: &[u8]) -> bool {
-    memchr::memmem::find(&data[..data.len().min(4096)], b"UPX!").is_some()
+    const EXE: &[&[u8]] = &[
+        b"MZ",
+        b"\x7fELF",
+        &[0xfe, 0xed, 0xfa, 0xce],
+        &[0xfe, 0xed, 0xfa, 0xcf],
+        &[0xce, 0xfa, 0xed, 0xfe],
+        &[0xcf, 0xfa, 0xed, 0xfe],
+    ];
+    EXE.iter().any(|m| data.starts_with(m))
+        && memchr::memmem::find(&data[..data.len().min(4096)], b"UPX!").is_some()
 }
 
 /// Electron .asar: 4-byte pickle size (always 4), header size, then JSON `{"files"`.
@@ -194,5 +246,36 @@ mod tests {
         v.extend_from_slice(&[0u8; 18]);
         assert!(has_trailing_zip(&v));
         assert!(!has_trailing_zip(b"no zip here"));
+    }
+
+    #[test]
+    fn gzip_and_tar_need_valid_headers() {
+        let mut gz = vec![0x1f, 0x8b, 0x08, 0x00];
+        gz.resize(32, 0);
+        assert!(is_gzip(&gz));
+        assert!(!is_gzip(&[
+            0x1f, 0x8b, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ]));
+        let mut bad_flags = gz.clone();
+        bad_flags[3] = 0x20;
+        assert!(!is_gzip(&bad_flags));
+
+        let mut h = vec![0u8; 1024];
+        h[..6].copy_from_slice(b"ca.pem");
+        h[257..263].copy_from_slice(b"ustar\0");
+        let sum: u32 = h[..512].iter().map(|&b| b as u32).sum::<u32>() + 8 * b' ' as u32;
+        h[148..155].copy_from_slice(format!("{sum:06o}\0").as_bytes());
+        h[155] = b' ';
+        assert_eq!(container(&h), Some(Container::Tar));
+        h[0] ^= 1;
+        assert_eq!(container(&h), None, "checksum mismatch is not tar");
+    }
+
+    #[test]
+    fn upx_needs_an_executable() {
+        let mut exe = b"\x7fELF".to_vec();
+        exe.extend_from_slice(b"....UPX!");
+        assert!(has_upx(&exe));
+        assert!(!has_upx(b"// matches b\"UPX!\" in the first 4 KiB"));
     }
 }
