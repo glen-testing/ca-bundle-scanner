@@ -353,7 +353,15 @@ mod tests {
             "windows",
             None,
         );
+        // Windows patterns use backslashes, which only Windows globbing treats as a separator.
+        #[cfg(windows)]
         assert_eq!(resolved(&locs, "Java cacerts (Windows)"), vec![cacerts]);
+        #[cfg(not(windows))]
+        assert!(
+            locs.iter().any(|l| l.label == "Java cacerts (Windows)"
+                && l.pattern.ends_with(r"Java\*\lib\security\cacerts")),
+            "{cacerts:?}"
+        );
         // Not on Linux.
         let linux = system(
             &env(&[("ProgramFiles", pf.to_str().unwrap())]),
