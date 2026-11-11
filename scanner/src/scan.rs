@@ -175,15 +175,7 @@ impl<'a> FileScan<'a> {
                     self.leaf(data, path, depth);
                 }
             }
-            Some(Container::Gzip) => {
-                let out = self.decompress(
-                    &mut flate2::read::MultiGzDecoder::new(data),
-                    0,
-                    path,
-                    "gzip",
-                );
-                self.scan_blob(&out, path, depth + 1);
-            }
+            Some(Container::Gzip) => self.scan_gzip(data, path, depth),
             Some(Container::Xz) => {
                 let out = self.unxz(data, path);
                 self.scan_blob(&out, path, depth + 1);
@@ -210,15 +202,52 @@ impl<'a> FileScan<'a> {
         }
     }
 
+    /// gzip members one at a time (multi-member files, `cat a.gz b.gz`), concatenated
+    /// as one stream. Data after the last member that is not another gzip header
+    /// (save games and caches append their own records) is scanned as is, not
+    /// reported as a broken gzip header.
+    fn scan_gzip(&mut self, data: &[u8], path: &str, depth: u32) {
+        let mut out = Vec::new();
+        let mut rest = data;
+        while detect::is_gzip(rest) && self.decompressed_left > 0 {
+            let mut dec = flate2::bufread::GzDecoder::new(rest);
+            let (part, ok) = self.decompress_status(&mut dec, 0, path, "gzip");
+            let left = dec.into_inner();
+            out.extend_from_slice(&part);
+            if !ok || left.len() >= rest.len() {
+                rest = &[];
+                break;
+            }
+            rest = left;
+        }
+        self.scan_blob(&out, path, depth + 1);
+        drop(out);
+        if !rest.is_empty() && self.decompressed_left > 0 {
+            self.scan_blob(rest, path, depth + 1);
+        }
+    }
+
     /// Read up to the remaining decompression budget; partial output is kept.
     fn decompress(&mut self, r: &mut dyn Read, hint: u64, path: &str, what: &str) -> Vec<u8> {
+        self.decompress_status(r, hint, path, what).0
+    }
+
+    /// As `decompress`, plus whether the stream was read to its end without error.
+    fn decompress_status(
+        &mut self,
+        r: &mut dyn Read,
+        hint: u64,
+        path: &str,
+        what: &str,
+    ) -> (Vec<u8>, bool) {
         let cap = self.decompressed_left;
         if cap == 0 {
             self.budget_exhausted(path);
-            return Vec::new();
+            return (Vec::new(), false);
         }
         let mut buf = Vec::with_capacity(hint.min(cap).min(64 << 20) as usize);
         let res = r.take(cap + 1).read_to_end(&mut buf);
+        let mut ok = res.is_ok();
         if let Err(e) = res {
             let msg = format!("{what} data unreadable after {} bytes: {e}", buf.len());
             self.error(path, msg);
@@ -226,9 +255,10 @@ impl<'a> FileScan<'a> {
         if buf.len() as u64 > cap {
             buf.truncate(cap as usize);
             self.budget_exhausted(path);
+            ok = false;
         }
         self.decompressed_left -= buf.len() as u64;
-        buf
+        (buf, ok)
     }
 
     fn budget_exhausted(&mut self, path: &str) {

@@ -121,6 +121,15 @@ fn guarded(fs: &mut FileScan<'_>, path: &str, f: impl FnOnce(&mut FileScan<'_>))
     }
 }
 
+/// Errors meaning there is no regular file to read: it vanished between the
+/// directory walk and the read (caches, lock files), or, on Windows, it is a
+/// reparse point the system cannot open as a file (AF_UNIX sockets, WSL
+/// symlinks, app execution aliases: ERROR_CANT_ACCESS_FILE, 1920). Unix walks
+/// skip sockets and the like by file type already.
+fn not_a_file(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::NotFound || (cfg!(windows) && e.raw_os_error() == Some(1920))
+}
+
 /// Scan one file from disk; a panic inside a decoder is reported, not fatal.
 fn scan_file(path: &Path, context: Context, profile: &Profile, limits: &Limits) -> FileResult {
     let display = path.display().to_string();
@@ -134,6 +143,7 @@ fn scan_file(path: &Path, context: Context, profile: &Profile, limits: &Limits) 
     };
     let file = match File::open(path) {
         Ok(f) => f,
+        Err(e) if not_a_file(&e) => return res,
         Err(e) => {
             err(&mut res, format!("unreadable: {e}"));
             return res;
@@ -299,6 +309,7 @@ fn expand(loc: &Location, home_filter: bool) -> Walk {
                     let ctx = locations::context_for(&p, loc.context);
                     w.files.push((p, ctx));
                 }
+                Err(e) if e.io_error().is_some_and(not_a_file) => {}
                 Err(e) => {
                     let path = e
                         .path()
@@ -405,6 +416,7 @@ pub fn run(cfg: &Config, progress: &mut dyn FnMut(&LocationResult)) -> Report {
                         duplicates += 1;
                     }
                 }
+                Err(e) if not_a_file(&e) => {}
                 Err(e) => report.issues.push(Issue {
                     path: p.display().to_string(),
                     severity: Severity::Error,
@@ -557,6 +569,31 @@ mod tests {
             .issues
             .iter()
             .any(|i| i.severity == Severity::Error && i.message.contains("decoder exploded")));
+    }
+
+    #[test]
+    fn n19_vanished_files_and_unopenable_reparse_points_are_skipped() {
+        use std::io::{Error, ErrorKind};
+        assert!(not_a_file(&Error::from(ErrorKind::NotFound)));
+        // ERROR_CANT_ACCESS_FILE: AF_UNIX sockets, WSL symlinks, app execution aliases.
+        assert_eq!(not_a_file(&Error::from_raw_os_error(1920)), cfg!(windows));
+        // FP: real coverage gaps stay errors.
+        assert!(!not_a_file(&Error::from(ErrorKind::PermissionDenied)));
+        // Windows sharing violation (file locked by another process).
+        assert!(!not_a_file(&Error::from_raw_os_error(32)));
+    }
+
+    #[test]
+    fn n19_file_vanished_after_walk_is_not_an_error() {
+        let t = tempfile::tempdir().unwrap();
+        let gone = t.path().join("gone.pem");
+        let r = scan_file(
+            &gone,
+            Context::Trust,
+            &Profile::new("x"),
+            &Limits::default(),
+        );
+        assert!(r.issues.is_empty(), "{:?}", r.issues);
     }
 
     #[test]
